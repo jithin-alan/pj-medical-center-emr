@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  }
+  
+  .font-mono, [data-mono] {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Print Styles for Thermal Receipt (80mm) and A5 Prescription (148 x 210 mm) */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #thermal-receipt-print-area, #thermal-receipt-print-area * {
+    visibility: visible;
+  }
+  #thermal-receipt-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 78mm;
+    margin: 0;
+    padding: 2mm;
+    background: white !important;
+    color: black !important;
+    font-size: 11px;
+    line-height: 1.25;
+  }
+
+  #a5-prescription-print-area, #a5-prescription-print-area * {
+    visibility: visible;
+  }
+  #a5-prescription-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 148mm;
+    min-height: 210mm;
+    margin: 0;
+    padding: 8mm;
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  @page {
+    margin: 5mm;
+  }
+}

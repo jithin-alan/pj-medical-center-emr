@@ -1,0 +1,6 @@
+{
+  "name": "PJ Medical - Clinic Management System",
+  "description": "Outpatient clinic management prototype for PJ Medical in Kerala, India, handling registration, tokens, consultations, procedure billing, nursing, pharmacy dispensing, shifts, accounts, and waiting room TV display.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
