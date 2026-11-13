@@ -27,22 +27,24 @@ export const AccountsScreen: React.FC = () => {
     openShift,
     closeShift,
     voidBill,
+    approveRefund,
     showToast,
     showConfirm,
   } = useClinic();
 
-  // Active view: 'overview_eod' | 'shifts_cash' | 'bills_voids'
-  const [activeTab, setActiveTab] = useState<'overview_eod' | 'shifts_cash' | 'bills_voids'>('overview_eod');
+  // Active view
+  const [activeTab, setActiveTab] = useState<'overview_eod' | 'shifts_cash' | 'bills_voids' | 'refunds_cancellations'>('overview_eod');
 
   // Void Modal State
   const [voidModalOpen, setVoidModalOpen] = useState(false);
   const [billToVoid, setBillToVoid] = useState<Bill | null>(null);
   const [voidReason, setVoidReason] = useState('');
-  const [voidManagerName, setVoidManagerName] = useState('Accounts Manager (placeholder)');
 
   // Shift Close Modal State
   const [shiftToClose, setShiftToClose] = useState<ShiftRecord | null>(null);
   const [actualCashInput, setActualCashInput] = useState('');
+  const [handedOverTo, setHandedOverTo] = useState('');
+  const [handoverNotes, setHandoverNotes] = useState('');
 
   // Open New Shift State
   const [isOpeningShift, setIsOpeningShift] = useState(false);
@@ -54,6 +56,20 @@ export const AccountsScreen: React.FC = () => {
   // Active valid bills (not voided)
   const paidBills = bills.filter((b) => b.status === 'paid');
   const voidedBills = bills.filter((b) => b.status === 'voided');
+  const pendingRefunds = bills.flatMap((bill) =>
+    (bill.refunds || []).filter((refund) => refund.status === 'pending').map((refund) => ({ bill, refund }))
+  );
+  const allRefunds = bills.flatMap((bill) =>
+    (bill.refunds || []).map((refund) => ({ bill, refund }))
+  );
+  const pendingCancellations = bills.filter((bill) => bill.cancellationRequest?.status === 'pending');
+  const shiftsByDate = shifts.reduce<Record<string, typeof shifts>>((groups, shift) => {
+    const dateKey = new Date(shift.openedAt).toLocaleDateString('en-CA');
+    if (!groups[dateKey]) groups[dateKey] = [];
+    groups[dateKey].push(shift);
+    return groups;
+  }, {});
+  const shiftDateKeys = Object.keys(shiftsByDate).sort((a, b) => b.localeCompare(a));
 
   // STRICT REQUIREMENT: Reception total and Pharmacy total are shown SEPARATELY, NEVER combined as one!
   const receptionBills = paidBills.filter((b) => b.type === 'consultation' || b.type === 'procedure');
@@ -90,12 +106,6 @@ export const AccountsScreen: React.FC = () => {
   const handleOpenVoidModal = (bill: Bill) => {
     setBillToVoid(bill);
     setVoidReason('');
-    // Default approver name to current user if different from bill cashier
-    if (currentUser.name && currentUser.name !== bill.cashierName) {
-      setVoidManagerName(currentUser.name);
-    } else {
-      setVoidManagerName('Accounts Manager (placeholder)');
-    }
     setVoidModalOpen(true);
   };
 
@@ -105,18 +115,16 @@ export const AccountsScreen: React.FC = () => {
       showToast('error', 'SAFETY RULE: You MUST provide a clear reason for voiding this invoice.');
       return;
     }
-
-    // Segregation of duties: Cashier who generated the invoice cannot approve the void!
-    if (billToVoid.cashierName.trim().toLowerCase() === voidManagerName.trim().toLowerCase()) {
-      showToast(
-        'error',
-        `SEGREGATION OF DUTIES VIOLATION: Cashier "${billToVoid.cashierName}" created this bill and CANNOT approve its void. A separate Accounts approver is required.`,
-        'Approval Blocked'
-      );
+    if (!['accounts', 'admin'].includes(currentUser.role)) {
+      showToast('error', 'Only an authenticated Accounts or Admin user may approve cancellation.', 'Approval Blocked');
+      return;
+    }
+    if (billToVoid.cashierName.trim().toLowerCase() === currentUser.name.trim().toLowerCase()) {
+      showToast('error', 'The invoice creator cannot approve its cancellation.', 'Approval Blocked');
       return;
     }
 
-    const success = await voidBill(billToVoid.id, voidReason, voidManagerName, 'ACCOUNTS');
+    const success = await voidBill(billToVoid.id, voidReason);
     if (success) {
       setVoidModalOpen(false);
       setBillToVoid(null);
@@ -126,6 +134,8 @@ export const AccountsScreen: React.FC = () => {
   const handleOpenCloseShiftModal = (shift: ShiftRecord) => {
     setShiftToClose(shift);
     setActualCashInput('');
+    setHandedOverTo('');
+    setHandoverNotes('');
   };
 
   const handleConfirmCloseShift = async () => {
@@ -135,7 +145,11 @@ export const AccountsScreen: React.FC = () => {
       showToast('error', 'Please enter a valid cash count amount.');
       return;
     }
-    const success = await closeShift(shiftToClose.id, actual);
+    if (!handedOverTo.trim()) {
+      showToast('error', 'Enter the person receiving the handover.');
+      return;
+    }
+    const success = await closeShift(shiftToClose.id, actual, handedOverTo.trim(), handoverNotes.trim());
     if (success) {
       setShiftToClose(null);
     }
@@ -234,6 +248,21 @@ export const AccountsScreen: React.FC = () => {
               Cashier Shifts ({shifts.length})
             </button>
             <button
+              onClick={() => setActiveTab('refunds_cancellations')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                activeTab === 'refunds_cancellations'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Refunds & Cancellations
+              {(pendingRefunds.length + pendingCancellations.length) > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                  {pendingRefunds.length + pendingCancellations.length}
+                </span>
+              )}
+            </button>
+            <button
               onClick={() => setActiveTab('bills_voids')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
                 activeTab === 'bills_voids'
@@ -320,7 +349,7 @@ export const AccountsScreen: React.FC = () => {
                   Breakdown by Shift & Cashier
                 </span>
                 <div className="space-y-1.5 text-xs">
-                  {['Shift A', 'Shift B'].map((sh) => {
+                  {['Shift A', 'Shift B', 'Shift C'].map((sh) => {
                     const shBills = receptionBills.filter((b) => b.shift === sh);
                     const shTotal = shBills.reduce((s, b) => s + b.total, 0);
 
@@ -391,7 +420,7 @@ export const AccountsScreen: React.FC = () => {
                   Breakdown by Shift & Cashier
                 </span>
                 <div className="space-y-1.5 text-xs">
-                  {['Shift A', 'Shift B'].map((sh) => {
+                  {['Shift A', 'Shift B', 'Shift C'].map((sh) => {
                     const shBills = pharmacyBills.filter((b) => b.shift === sh);
                     const shTotal = shBills.reduce((s, b) => s + b.total, 0);
 
@@ -484,8 +513,18 @@ export const AccountsScreen: React.FC = () => {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {shifts.map((s) => {
+          <div className="space-y-5">
+            {shiftDateKeys.map((dateKey) => (
+              <section key={dateKey} className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wide text-slate-700">
+                    {new Date(`${dateKey}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+                  </h4>
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <span className="text-[11px] font-bold text-slate-500">{shiftsByDate[dateKey].length} shifts</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {shiftsByDate[dateKey].map((s) => {
               const isOpen = s.status === 'open';
 
               return (
@@ -555,6 +594,13 @@ export const AccountsScreen: React.FC = () => {
                             {(s.difference || 0) >= 0 ? '+' : ''}₹{s.difference?.toLocaleString('en-IN')}
                           </span>
                         </div>
+                        {s.handedOverTo && (
+                          <div className="col-span-2">
+                            <span className="text-slate-500 block">Handed over to:</span>
+                            <span className="font-bold text-slate-800">{s.handedOverTo}</span>
+                            {s.handoverNotes && <span className="block text-slate-500">{s.handoverNotes}</span>}
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -570,8 +616,93 @@ export const AccountsScreen: React.FC = () => {
                     </div>
                   )}
                 </div>
-              );
-            })}
+                  );
+                  })}
+                </div>
+              </section>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* REFUNDS & CANCELLATIONS WORKFLOW */}
+      {activeTab === 'refunds_cancellations' && (
+        <div className="space-y-5">
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+            <h3 className="text-sm font-bold text-slate-900 uppercase">Refund Approvals</h3>
+            <p className="text-xs text-slate-500 mt-1">Refund requests created in Reception or Pharmacy appear here for Accounts approval.</p>
+            {pendingRefunds.length === 0 ? (
+              <div className="mt-4 p-4 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-500">No refunds are awaiting approval.</div>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {pendingRefunds.map(({ bill, refund }) => (
+                  <div key={refund.id} className="p-3 rounded-lg border border-amber-200 bg-amber-50 flex items-center justify-between gap-3">
+                    <div className="text-xs">
+                      <strong className="font-mono">{refund.refundNo}</strong> · {bill.invoiceNo} · {bill.patientName}<br />
+                      <strong>₹{refund.amount.toFixed(2)}</strong> · {refund.method.toUpperCase()} · {refund.reason}<br />
+                      <span className="text-slate-500">Requested by {refund.createdByName}</span>
+                    </div>
+                    <button type="button" onClick={() => approveRefund(bill.id, refund.id)} className="px-3 py-2 rounded-lg bg-teal-600 text-white text-xs font-bold cursor-pointer">Approve Refund</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+            <h3 className="text-sm font-bold text-slate-900 uppercase">Cancellation Approvals</h3>
+            <p className="text-xs text-slate-500 mt-1">Cancellation requests from Reception require Accounts or Admin approval.</p>
+            {pendingCancellations.length === 0 ? (
+              <div className="mt-4 p-4 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-500">No cancellations are awaiting approval.</div>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {pendingCancellations.map((bill) => {
+                  const request = bill.cancellationRequest!;
+                  return (
+                    <div key={bill.id} className="p-3 rounded-lg border border-rose-200 bg-rose-50 flex items-center justify-between gap-3">
+                      <div className="text-xs">
+                        <strong className="font-mono">{bill.invoiceNo}</strong> · {bill.patientName} · ₹{bill.total.toFixed(2)}<br />
+                        <span>{request.reason}</span><br />
+                        <span className="text-slate-500">Requested by {request.requestedByName}</span>
+                      </div>
+                      <button type="button" onClick={() => voidBill(bill.id, request.reason)} className="px-3 py-2 rounded-lg bg-rose-600 text-white text-xs font-bold cursor-pointer">Approve Cancellation</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+            <h3 className="text-sm font-bold text-slate-900 uppercase">Refund Register</h3>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-100 text-slate-700"><tr><th className="p-2">Refund</th><th className="p-2">Invoice</th><th className="p-2">Patient</th><th className="p-2">Amount</th><th className="p-2">Status</th></tr></thead>
+                <tbody>
+                  {allRefunds.length === 0 ? (
+                    <tr><td colSpan={5} className="p-4 text-center text-slate-500">No refund records.</td></tr>
+                  ) : allRefunds.map(({ bill, refund }) => (
+                    <tr key={refund.id} className="border-t border-slate-100"><td className="p-2 font-mono font-bold">{refund.refundNo}</td><td className="p-2 font-mono">{bill.invoiceNo}</td><td className="p-2">{bill.patientName}</td><td className="p-2 font-mono font-bold">₹{refund.amount.toFixed(2)}</td><td className="p-2 uppercase font-bold">{refund.status}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+            <div className="flex items-center justify-between">
+              <div><h3 className="text-sm font-bold text-slate-900 uppercase">Cancellation Register</h3><p className="text-xs text-slate-500 mt-1">Final invoices are preserved and marked cancelled or voided.</p></div>
+              <span className="px-2.5 py-1 rounded bg-rose-50 border border-rose-200 text-xs font-bold text-rose-700">{voidedBills.length} cancelled</span>
+            </div>
+            {voidedBills.length === 0 ? (
+              <div className="mt-4 p-4 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-500">No cancelled invoices.</div>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {voidedBills.map((bill) => (
+                  <div key={bill.id} className="p-3 rounded-lg border border-rose-200 bg-rose-50 text-xs"><strong className="font-mono">{bill.invoiceNo}</strong> · {bill.patientName} · ₹{bill.total.toFixed(2)}<br /><span className="text-slate-600">{bill.voidReason || 'Cancellation reason not recorded'}</span>{bill.voidApprovedBy && <span className="text-slate-500"> · Approved by {bill.voidApprovedBy}</span>}</div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -592,6 +723,25 @@ export const AccountsScreen: React.FC = () => {
               {voidedBills.length} Voided Invoice(s)
             </div>
           </div>
+
+          {bills.some((bill) => bill.refunds?.some((refund) => refund.status === 'pending')) && (
+            <div className="border border-amber-200 bg-amber-50 rounded-xl p-4 space-y-2">
+              <h4 className="text-xs font-bold uppercase text-amber-900">Pending Refund Approvals</h4>
+              {bills.flatMap((bill) => (bill.refunds || []).filter((refund) => refund.status === 'pending').map((refund) => (
+                <div key={refund.id} className="flex items-center justify-between gap-4 bg-white border border-amber-200 rounded-lg px-3 py-2 text-xs">
+                  <div>
+                    <strong>{refund.refundNo}</strong> · {bill.invoiceNo} · <strong>₹{refund.amount.toFixed(2)}</strong> · {refund.method.toUpperCase()}<br />
+                    <span className="text-slate-500">Created by {refund.createdByName}: {refund.reason}</span>
+                  </div>
+                  {refund.createdByName.trim().toLowerCase() === currentUser.name.trim().toLowerCase() ? (
+                    <span className="text-rose-600 font-semibold">Creator cannot approve</span>
+                  ) : (
+                    <button type="button" onClick={() => approveRefund(bill.id, refund.id)} className="px-3 py-1.5 rounded bg-teal-600 text-white font-bold cursor-pointer">Approve</button>
+                  )}
+                </div>
+              )))}
+            </div>
+          )}
 
           <div className="border border-slate-200 rounded-xl overflow-hidden">
             <table className="w-full text-xs text-left">
@@ -689,17 +839,8 @@ export const AccountsScreen: React.FC = () => {
               </span>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Accounts Approver Name *
-              </label>
-              <input
-                type="text"
-                required
-                value={voidManagerName}
-                onChange={(e) => setVoidManagerName(e.target.value)}
-                className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded focus:outline-hidden"
-              />
+            <div className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs">
+              Authenticated approver: <strong className="text-slate-800">{currentUser.name}</strong> ({currentUser.role})
             </div>
 
             <div>
@@ -766,8 +907,16 @@ export const AccountsScreen: React.FC = () => {
                 className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:border-teal-500 focus:outline-hidden"
               />
               <p className="text-[11px] text-slate-500 mt-1">
-                The app will calculate discrepancy = Actual Count - (Opening Float + Recorded Cash Sales).
+                The app will calculate discrepancy = Actual Count - (Opening Float + Recorded Cash Sales - Cash Refunds).
               </p>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Handed over to *</label>
+              <input value={handedOverTo} onChange={(e) => setHandedOverTo(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg" placeholder="Receiving cashier / custodian" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Handover notes</label>
+              <textarea value={handoverNotes} onChange={(e) => setHandoverNotes(e.target.value)} rows={2} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg resize-none" placeholder="Cash bags, denominations, discrepancies..." />
             </div>
 
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
@@ -820,6 +969,7 @@ export const AccountsScreen: React.FC = () => {
                 >
                   <option value="Shift A">Shift A (Morning 08:00 - 14:00)</option>
                   <option value="Shift B">Shift B (Evening 14:00 - 20:00)</option>
+                  <option value="Shift C">Shift C (Night 20:00 - 08:00)</option>
                 </select>
               </div>
 

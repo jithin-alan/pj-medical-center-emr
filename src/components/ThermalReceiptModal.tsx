@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Bill } from '../types';
 import { Printer, X, CheckCircle2 } from 'lucide-react';
 import { useClinic } from '../context/ClinicContext';
@@ -9,11 +9,16 @@ interface ThermalReceiptModalProps {
 }
 
 export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({ bill, onClose }) => {
-  const { visits, doctors, settings } = useClinic();
-  const relatedVisit = visits.find((v) => v.id === bill.visitId || v.consultationReceiptNo === bill.invoiceNo || v.procedureBillId === bill.invoiceNo || v.pharmacyBillId === bill.invoiceNo);
-  const relatedDoctor = doctors.find((d) => d.id === relatedVisit?.doctorId);
+  const { visits, doctors, settings, recordDocumentPrint } = useClinic();
 
-  const handlePrint = () => {
+  // Memoized lookup map for efficient O(1) doctor access
+  const doctorMap = useMemo(() => new Map(doctors.map((d) => [d.id, d])), [doctors]);
+
+  const relatedVisit = visits.find((v) => v.id === bill.visitId || v.consultationReceiptNo === bill.invoiceNo || v.procedureBillId === bill.invoiceNo || v.pharmacyBillId === bill.invoiceNo);
+  const relatedDoctor = relatedVisit ? doctorMap.get(relatedVisit.doctorId) : undefined;
+
+  const handlePrint = async () => {
+    await recordDocumentPrint('receipt', bill.id);
     window.print();
   };
 
@@ -56,8 +61,9 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({ bill, 
             className="bg-white border border-slate-300 shadow-sm p-4 text-slate-900 w-[78mm] text-[11px] leading-tight font-mono select-none"
             style={{ minHeight: '110mm' }}
           >
-            {/* Header with placeholder clinic info */}
+            {/* Clinic logo and details */}
             <div className="text-center pb-2 border-b border-dashed border-slate-400">
+              <img src="/clinic-logo.jpg" alt="PJ Medical Center logo" className="w-16 h-16 object-contain mx-auto mb-1" />
               <h2 className="font-bold text-sm tracking-wider uppercase text-slate-950">
                 {settings.clinicName}
               </h2>
@@ -186,7 +192,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({ bill, 
               className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 rounded-lg shadow-sm transition-colors cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              <span>Print 80mm Receipt</span>
+              <span>{(bill.printCount || 0) > 0 ? 'Reprint 80mm Receipt' : 'Print 80mm Receipt'}</span>
             </button>
           </div>
         </div>

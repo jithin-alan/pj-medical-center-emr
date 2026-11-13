@@ -19,7 +19,9 @@ import {
   Clock,
   History,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  RotateCcw,
+  XCircle
 } from 'lucide-react';
 import { PatientJourneyBar } from '../components/PatientJourneyBar';
 import { VisitHistoryModal } from '../components/VisitHistoryModal';
@@ -40,8 +42,23 @@ export const ReceptionScreen: React.FC = () => {
     billWalkInLabs,
     setActiveReceiptBill,
     showToast,
-    showConfirm,
+    voidBill,
+    returnPharmacyItems,
+    currentUser,
   } = useClinic();
+
+  // Memoized lookup maps for efficient O(1) access
+  const doctorMap = useMemo(() => new Map(doctors.map((d) => [d.id, d])), [doctors]);
+  const patientMap = useMemo(() => new Map(patients.map((p) => [p.id, p])), [patients]);
+  const billsByVisitMap = useMemo(() => {
+    const map = new Map<string, typeof bills>();
+    bills.forEach((b) => {
+      const list = map.get(b.visitId) || [];
+      list.push(b);
+      map.set(b.visitId, list);
+    });
+    return map;
+  }, [bills]);
 
   // Active Reception Shift
   const activeShift = shifts.find(
@@ -66,6 +83,8 @@ export const ReceptionScreen: React.FC = () => {
 
   // Visit history modal
   const [historyPatient, setHistoryPatient] = useState<Patient | null>(null);
+  const [billingAction, setBillingAction] = useState<{ billId: string; invoiceNo: string; type: 'cancel' | 'refund' } | null>(null);
+  const [billingActionReason, setBillingActionReason] = useState('');
 
   // New Patient Form State
   const [formData, setFormData] = useState({
@@ -108,11 +127,34 @@ export const ReceptionScreen: React.FC = () => {
       setSelectedPatient({ ...selectedPatient, allergies: list });
     }
   };
+
+  // FOLLOW-UP PROTOCOL: A paid consultation grants 14 days of free follow-up visits.
+  const FOLLOW_UP_DAYS = 14;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const followUpInfo = useMemo(() => {
+    if (!selectedPatient?.followUpUntil) {
+      return { isActive: false, until: null as string | null, daysLeft: 0, isExpired: false };
+    }
+    const until = new Date(`${selectedPatient.followUpUntil}T00:00:00Z`).getTime();
+    const today = new Date(`${todayStr}T00:00:00Z`).getTime();
+    const diffDays = Math.ceil((until - today) / (1000 * 60 * 60 * 24));
+    return {
+      isActive: diffDays >= 0,
+      until: selectedPatient.followUpUntil,
+      daysLeft: Math.max(0, diffDays),
+      isExpired: diffDays < 0,
+    };
+  }, [selectedPatient?.followUpUntil, todayStr]);
+
+  const selectedDoctorFee = doctorMap.get(selectedDoctorId)?.consultationFee || 300;
+  const effectiveFee = followUpInfo.isActive ? 0 : selectedDoctorFee;
   const selectedVisitForProcBilling = useMemo(
     () => visits.find((v) => v.id === selectedProcVisitId) || null,
     [visits, selectedProcVisitId]
   );
   const [procPaymentMethod, setProcPaymentMethod] = useState<PaymentMethod>('cash');
+  const [procDiscountAmount, setProcDiscountAmount] = useState('0');
+  const [procDiscountReason, setProcDiscountReason] = useState('');
   const [procUpiRef, setProcUpiRef] = useState('');
 
   // STAGE 2: Auto-detect Search by MR Number vs Mobile Number
@@ -224,16 +266,28 @@ export const ReceptionScreen: React.FC = () => {
     }
 
     const currentVisitId = selectedVisitForProcBilling.id;
+    const billingPatient = patients.find((patient) => patient.id === selectedVisitForProcBilling.patientId);
+    const savedDiscount = currentUser.role === 'admin' && billingPatient?.discount?.remainingUses ? billingPatient.discount : undefined;
+    const unbilledForDiscount = [
+      ...selectedVisitForProcBilling.procedureOrders.filter((item) => item.status === 'UNBILLED' || (!item.billed && item.status !== 'GIVEN')),
+      ...(selectedVisitForProcBilling.labOrders || []).filter((item) => item.status === 'UNBILLED' || !item.billed),
+    ];
+    const eligibleSubtotal = unbilledForDiscount.reduce((sum, item) => sum + item.totalPrice, 0);
+    const grantedAmount = savedDiscount ? Math.min(eligibleSubtotal, savedDiscount.type === 'percentage' ? eligibleSubtotal * savedDiscount.value / 100 : savedDiscount.value) : 0;
     const success = await billProcedures(
       currentVisitId,
       procPaymentMethod,
-      procPaymentMethod === 'upi' ? procUpiRef : undefined
+      procPaymentMethod === 'upi' ? procUpiRef : undefined,
+      savedDiscount ? grantedAmount : currentUser.role === 'admin' ? Math.max(0, Number(procDiscountAmount) || 0) : undefined,
+      savedDiscount ? savedDiscount.reason : currentUser.role === 'admin' ? procDiscountReason.trim() : undefined
     );
 
     if (success) {
       // Keep this visit selected so reception immediately sees the BILLED status with invoice number!
       setSelectedProcVisitId(currentVisitId);
       setProcUpiRef('');
+      setProcDiscountAmount('0');
+      setProcDiscountReason('');
     }
   };
 
@@ -629,6 +683,15 @@ export const ReceptionScreen: React.FC = () => {
                       <p className="text-xs text-slate-500">
                         MRN: <strong className="font-mono text-slate-800">{selectedPatient.mrn}</strong> · {selectedPatient.age} yrs · {selectedPatient.sex} · {selectedPatient.phone}
                       </p>
+                      {followUpInfo.isActive ? (
+                        <p className="text-xs text-emerald-700 font-bold mt-1">
+                          ✅ In follow-up window (free) until {followUpInfo.until} · {followUpInfo.daysLeft} day(s) left
+                        </p>
+                      ) : followUpInfo.until ? (
+                        <p className="text-xs text-amber-700 font-bold mt-1">
+                          ⏰ Follow-up window expired on {followUpInfo.until} — this visit will be a paid consultation
+                        </p>
+                      ) : null}
                       {selectedPatient.allergies.length > 0 ? (
                         <p className="text-xs text-rose-600 font-bold mt-1">
                           ⚠️ Allergies: {selectedPatient.allergies.join(', ')}
@@ -747,7 +810,7 @@ export const ReceptionScreen: React.FC = () => {
               {/* Payment Mode */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Consultation Fee Payment Mode (₹300) *
+                  Consultation Fee Payment Mode {effectiveFee === 0 ? '(FREE FOLLOW-UP)' : `(₹${selectedDoctorFee})`} *
                 </label>
                 <div className="grid grid-cols-3 gap-3">
                   <label
@@ -826,10 +889,16 @@ export const ReceptionScreen: React.FC = () => {
                 <button
                   type="submit"
                   disabled={!selectedPatient && !isRegisteringNew}
-                  className="w-full py-3.5 bg-teal-600 hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  className={`w-full py-3.5 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                    effectiveFee === 0 ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-teal-600 hover:bg-teal-700'
+                  }`}
                 >
                   <Receipt className="w-5 h-5" />
-                  <span>Receive ₹300, Issue Token & Print Receipt</span>
+                  <span>
+                    {effectiveFee === 0
+                      ? 'Issue Free Follow-up Token & Print Receipt'
+                      : `Receive ₹${selectedDoctorFee}, Issue Token & Print Receipt`}
+                  </span>
                 </button>
               </div>
             </form>
@@ -886,7 +955,7 @@ export const ReceptionScreen: React.FC = () => {
                           {pat?.name} ({pat?.mrn})
                         </div>
                         <div className="text-xs text-slate-500 mt-0.5">
-                          {unbilled.length} unbilled item(s) ordered by {doctors.find((d) => d.id === v.doctorId)?.name}
+                          {unbilled.length} unbilled item(s) ordered by {doctorMap.get(v.doctorId)?.name}
                         </div>
                       </div>
                     );
@@ -972,6 +1041,9 @@ export const ReceptionScreen: React.FC = () => {
                   ),
                 ];
                 const subtotal = unbilledItems.reduce((sum, item) => sum + item.totalPrice, 0);
+                const grantedDiscount = pat?.discount?.remainingUses ? pat.discount : undefined;
+                const adminDiscount = grantedDiscount ? Math.min(subtotal, grantedDiscount.type === 'percentage' ? subtotal * grantedDiscount.value / 100 : grantedDiscount.value) : currentUser.role === 'admin' ? Math.min(subtotal, Math.max(0, Number(procDiscountAmount) || 0)) : 0;
+                const payableTotal = Math.max(0, subtotal - adminDiscount);
                 const matchingBill = bills.find(
                   (b) => b.type === 'procedure' && (b.visitId === selectedVisitForProcBilling.id || b.invoiceNo === selectedVisitForProcBilling.procedureBillId)
                 );
@@ -995,12 +1067,18 @@ export const ReceptionScreen: React.FC = () => {
                             )}
                           </div>
                           <div className="text-right">
-                            <span className="text-xs text-slate-500 block">Total Due</span>
-                            <span className="text-2xl font-black font-mono text-teal-700">
-                              ₹{subtotal}
-                            </span>
+                            <span className="text-xs text-slate-500 block">{adminDiscount > 0 ? 'Patient pays' : 'Total Due'}</span>
+                            <span className="text-2xl font-black font-mono text-teal-700">₹{payableTotal.toFixed(2)}</span>
                           </div>
                         </div>
+                        {adminDiscount > 0 && (
+                          <div className="mt-3 pt-3 border-t border-slate-200 text-sm space-y-1">
+                            <div className="flex justify-between text-slate-600"><span>Bill subtotal</span><span>₹{subtotal.toFixed(2)}</span></div>
+                            <div className="flex justify-between font-semibold text-emerald-700"><span>Admin discount{grantedDiscount ? ` (${grantedDiscount.type === 'percentage' ? `${grantedDiscount.value}%` : 'fixed'})` : ''}</span><span>−₹{adminDiscount.toFixed(2)}</span></div>
+                            {grantedDiscount && <p className="text-[11px] text-slate-500">Discount reason: {grantedDiscount.reason}</p>}
+                            <div className="flex justify-between font-bold text-slate-900 pt-1"><span>Net payable before payment</span><span>₹{payableTotal.toFixed(2)}</span></div>
+                          </div>
+                        )}
                       </div>
 
                       <div>
@@ -1045,6 +1123,16 @@ export const ReceptionScreen: React.FC = () => {
                         </div>
                       </div>
 
+                      {(currentUser.role === 'admin' || grantedDiscount) && (
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                          <div className="text-xs font-bold text-amber-900 uppercase">Administrator Discount</div>
+                          {grantedDiscount ? <p className="text-xs text-amber-900">Saved patient discount: {grantedDiscount.type === 'percentage' ? `${grantedDiscount.value}%` : `₹${grantedDiscount.value}`} · {grantedDiscount.reason} · Applied to this eligible invoice only.</p> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input type="number" min="0" max={subtotal} step="0.01" value={procDiscountAmount} onChange={(e) => setProcDiscountAmount(e.target.value)} placeholder="Ad-hoc discount amount (₹)" className="px-3 py-2 text-xs border border-amber-300 rounded-md" />
+                            <input required={Number(procDiscountAmount) > 0} value={procDiscountReason} onChange={(e) => setProcDiscountReason(e.target.value)} placeholder="Reason required for discount" className="px-3 py-2 text-xs border border-amber-300 rounded-md" />
+                          </div>}
+                          <div className="flex justify-between text-xs font-bold"><span className="text-slate-600">Net payable</span><span className="text-teal-700">₹{payableTotal.toFixed(2)}</span></div>
+                        </div>
+                      )}
                       <div>
                         <label className="block text-xs font-bold text-slate-700 mb-1.5">
                           Procedure Payment Mode *
@@ -1124,7 +1212,7 @@ export const ReceptionScreen: React.FC = () => {
                         className="w-full py-3.5 bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
                       >
                         <Receipt className="w-4 h-4" />
-                        <span>Collect ₹{subtotal}, Print Procedure & Lab Bill & Route to Nurse</span>
+                        <span>Collect and Issue Bill · ₹{payableTotal.toFixed(2)}</span>
                       </button>
                     </form>
                   );
@@ -1329,8 +1417,10 @@ export const ReceptionScreen: React.FC = () => {
 
           <div className="space-y-3">
             {visits.map((v) => {
-              const pat = patients.find((p) => p.id === v.patientId);
-              const doc = doctors.find((d) => d.id === v.doctorId);
+              const pat = patientMap.get(v.patientId);
+              const doc = doctorMap.get(v.doctorId);
+              const linkedBills = billsByVisitMap.get(v.id) || [];
+              const activeLinkedBills = linkedBills.filter((bill) => !['voided', 'cancelled'].includes(bill.status) && bill.cancellationRequest?.status !== 'pending');
 
               return (
                 <div
@@ -1372,6 +1462,39 @@ export const ReceptionScreen: React.FC = () => {
                       <span className="text-xs font-mono font-bold text-slate-700 bg-white px-2.5 py-1 rounded border border-slate-200">
                         Fee: ₹{v.fee} ({v.paymentMethod.toUpperCase()})
                       </span>
+                      {activeLinkedBills.length > 0 && (
+                        <div className="flex items-center gap-1">
+                          {activeLinkedBills.map((bill) => (
+                            bill.type === 'pharmacy' ? (
+                              <button
+                                key={bill.id}
+                                type="button"
+                                title={`Request refund for ${bill.invoiceNo}`}
+                                onClick={() => {
+                                  setBillingActionReason('');
+                                  setBillingAction({ billId: bill.id, invoiceNo: bill.invoiceNo, type: 'refund' });
+                                }}
+                                className="px-2 py-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded hover:bg-amber-100 flex items-center gap-1 cursor-pointer"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" /> Refund
+                              </button>
+                            ) : (
+                              <button
+                                key={bill.id}
+                                type="button"
+                                title={`Cancel ${bill.invoiceNo}`}
+                                onClick={() => {
+                                  setBillingActionReason('');
+                                  setBillingAction({ billId: bill.id, invoiceNo: bill.invoiceNo, type: 'cancel' });
+                                }}
+                                className="px-2 py-1 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 cursor-pointer"
+                              >
+                                <XCircle className="w-3.5 h-3.5" /> Cancel
+                              </button>
+                            )
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1405,6 +1528,29 @@ export const ReceptionScreen: React.FC = () => {
                     </div>
                   )}
 
+                  {linkedBills.length > 0 && (
+                    <div className="flex flex-wrap gap-2 text-[11px]">
+                      {linkedBills.map((bill) => {
+                        const pendingRefund = bill.refunds?.some((refund) => refund.status === 'pending');
+                        const completedRefund = bill.refunds?.some((refund) => refund.status === 'completed');
+                        const billingStatus = pendingRefund
+                          ? 'REFUND PENDING'
+                          : bill.cancellationRequest?.status === 'pending'
+                          ? 'CANCELLATION PENDING'
+                          : completedRefund
+                          ? 'REFUND COMPLETED'
+                          : bill.status === 'voided' || bill.status === 'cancelled'
+                          ? 'CANCELLED'
+                          : bill.status.toUpperCase();
+                        return (
+                          <span key={bill.id} className="px-2 py-1 rounded bg-white border border-slate-200 font-mono font-bold text-slate-600">
+                            {bill.invoiceNo} · {billingStatus}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   {/* 8-stage progress bar */}
                   <PatientJourneyBar visit={v} />
                 </div>
@@ -1423,6 +1569,57 @@ export const ReceptionScreen: React.FC = () => {
           bills={bills}
           onClose={() => setHistoryPatient(null)}
         />
+      )}
+
+      {billingAction && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4" onMouseDown={(e) => e.target === e.currentTarget && setBillingAction(null)}>
+          <div className="w-full max-w-md rounded-xl bg-white border border-slate-200 shadow-xl p-5 space-y-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 uppercase">
+                {billingAction.type === 'cancel' ? 'Request invoice cancellation' : 'Request full refund'}
+              </h3>
+              <p className="text-xs text-slate-500 mt-1 font-mono">{billingAction.invoiceNo}</p>
+            </div>
+            <label className="block text-xs font-bold text-slate-700">
+              Reason <span className="text-rose-600">*</span>
+              <textarea
+                autoFocus
+                value={billingActionReason}
+                onChange={(e) => setBillingActionReason(e.target.value)}
+                rows={3}
+                className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal resize-none"
+                placeholder="Enter the reason for this action"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setBillingAction(null)} className="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold text-slate-700 cursor-pointer">Close</button>
+              <button
+                type="button"
+                disabled={!billingActionReason.trim()}
+                onClick={async () => {
+                  const bill = bills.find((item) => item.id === billingAction.billId);
+                  if (!bill) return;
+                  let success = false;
+                  if (billingAction.type === 'cancel') {
+                    success = await voidBill(bill.id, billingActionReason.trim());
+                  } else {
+                    success = await returnPharmacyItems({
+                      billId: bill.id,
+                      amount: bill.total - (bill.returnedAmount || 0),
+                      fullRefund: true,
+                      reason: billingActionReason.trim(),
+                      refundMethod: bill.paymentMethod === 'upi' ? 'upi' : bill.paymentMethod === 'card' ? 'card' : 'cash',
+                    });
+                  }
+                  if (success) setBillingAction(null);
+                }}
+                className="px-3 py-2 rounded-lg bg-teal-600 text-white text-xs font-bold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+              >
+                Submit {billingAction.type === 'cancel' ? 'Cancellation' : 'Refund'} Request
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

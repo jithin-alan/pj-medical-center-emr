@@ -10,6 +10,8 @@ import {
   Patient,
   TokenVisit,
   Bill,
+  PatientLedgerEntry,
+  PaymentLedgerEntry,
   ShiftRecord,
   AuditLog,
   ClinicSettings,
@@ -21,17 +23,27 @@ import {
   PrescribedMedicine,
   PrescribedProcedure,
   ClinicalTemplate,
+  StaffAccount,
 } from '../types';
 import { playClinicChime } from '../utils/audioChime';
 import { ToastContainer, ToastMessage } from '../components/Toast';
 import { ConfirmDialog, ConfirmDialogOptions } from '../components/ConfirmDialog';
+import { INITIAL_STAFF_ACCOUNTS } from '../data/initialData';
+
+// Staff accounts for offline/demo login mode
+const FALLBACK_STAFF_ACCOUNTS: StaffAccount[] = INITIAL_STAFF_ACCOUNTS;
 
 interface ClinicContextType {
   role: Role;
   setRole: (role: Role) => void;
   userName: string;
   setUserName: (name: string) => void;
+  isAuthenticated: boolean;
+  login: (staff: StaffAccount) => void;
+  logout: () => void;
   settings: ClinicSettings;
+  staffAccounts: StaffAccount[];
+  fallbackStaffAccounts: StaffAccount[];
   doctors: Doctor[];
   rooms: Room[];
   drugs: DrugItem[];
@@ -42,6 +54,8 @@ interface ClinicContextType {
   patients: Patient[];
   visits: TokenVisit[];
   bills: Bill[];
+  patientLedger: PatientLedgerEntry[];
+  paymentLedger: PaymentLedgerEntry[];
   shifts: ShiftRecord[];
   auditLogs: AuditLog[];
   currentDoctorId: DoctorId;
@@ -71,6 +85,8 @@ interface ClinicContextType {
     allergies: string[];
   }) => Promise<Patient | null>;
   updatePatientAllergies: (patientId: string, allergies: string[]) => Promise<boolean>;
+  updatePatientPastHistory: (patientId: string, pastHistory: string) => Promise<boolean>;
+  updatePatientDiscount: (patientId: string, discount: { type: 'percentage' | 'fixed'; value: number; reason: string }) => Promise<boolean>;
   createTokenVisit: (data: {
     patientId: string;
     doctorId: DoctorId;
@@ -84,7 +100,7 @@ interface ClinicContextType {
   updateProcedureOrders: (visitId: string, procedureOrders: PrescribedProcedure[]) => Promise<boolean>;
   updateLabOrders: (visitId: string, labOrders: PrescribedLabTest[]) => Promise<boolean>;
   finishConsultation: (visitId: string) => Promise<boolean>;
-  billProcedures: (visitId: string, paymentMethod: PaymentMethod, upiRef?: string) => Promise<boolean>;
+  billProcedures: (visitId: string, paymentMethod: PaymentMethod, upiRef?: string, discountAmount?: number, discountReason?: string) => Promise<boolean>;
   billWalkInLabs: (data: { patientId?: string; name: string; age: number; sex: 'Male' | 'Female' | 'Other'; phone: string; labTestIds: string[]; paymentMethod: PaymentMethod; upiRef?: string }) => Promise<boolean>;
   markProcedureGiven: (visitId: string, procedureId: string, note?: string) => Promise<boolean>;
   collectLabSample: (visitId: string, labTestId: string) => Promise<boolean>;
@@ -94,6 +110,8 @@ interface ClinicContextType {
   cancelPharmacyDispensing: (visitId: string) => Promise<boolean>;
   billAndCompletePharmacy: (visitId: string, paymentMethod: PaymentMethod, upiRef?: string) => Promise<boolean>;
   billRetailPharmacy: (data: { patientId?: string; name: string; age: number; sex: 'Male' | 'Female' | 'Other'; phone: string; items: { drugId: string; dosage: string; days: number; qty: number }[]; paymentMethod: PaymentMethod; upiRef?: string }) => Promise<boolean>;
+  returnPharmacyItems: (data: { billId: string; items?: { itemIndex: number; qty: number }[]; amount?: number; fullRefund?: boolean; reason: string; refundMethod: 'cash' | 'upi' | 'card'; idempotencyKey?: string }) => Promise<boolean>;
+  approveRefund: (billId: string, refundId: string) => Promise<boolean>;
   stockInBatch: (batchData: {
     drugId: string;
     batchNumber: string;
@@ -108,10 +126,15 @@ interface ClinicContextType {
   updateTemplate: (id: string, templateData: Partial<ClinicalTemplate>) => Promise<boolean>;
   deleteTemplate: (id: string) => Promise<boolean>;
   openShift: (department: 'reception' | 'pharmacy', shiftType: ShiftType, cashierName: string, openingCash: number) => Promise<boolean>;
-  closeShift: (shiftId: string, actualCashCounted: number) => Promise<boolean>;
-  voidBill: (billId: string, reason: string, approvedBy: string, approverRole: string) => Promise<boolean>;
+  closeShift: (shiftId: string, actualCashCounted: number, handedOverTo: string, handoverNotes?: string) => Promise<boolean>;
+  voidBill: (billId: string, reason: string) => Promise<boolean>;
+  requestRefund: (data: { billId: string; amount?: number; fullRefund?: boolean; reason: string; refundMethod: 'cash' | 'upi' | 'card'; idempotencyKey?: string }) => Promise<boolean>;
   updateClinicSettings: (settings: Partial<ClinicSettings>) => Promise<boolean>;
   resetDemoData: () => Promise<boolean>;
+  saveStaffAccount: (staff: Partial<StaffAccount>) => Promise<boolean>;
+  deleteStaffAccount: (id: string) => Promise<boolean>;
+  updateDoctorSchedule: (doctorId: DoctorId, schedule: Partial<Doctor>) => Promise<boolean>;
+  recordDocumentPrint: (documentType: 'receipt' | 'prescription', documentId: string) => Promise<boolean>;
 }
 
 const ClinicContext = createContext<ClinicContextType | undefined>(undefined);
@@ -129,6 +152,10 @@ const ROLE_DEFAULT_USERS: Record<Role, string> = {
 };
 
 export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return localStorage.getItem('pj_isAuthenticated') === 'true';
+  });
+
   const [role, setRoleState] = useState<Role>(() => {
     return (localStorage.getItem('pj_role') as Role) || 'receptionist';
   });
@@ -142,12 +169,13 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
   // Clinic state fetched from server
   const [settings, setSettings] = useState<ClinicSettings>({
-    clinicName: 'PJ Medical Clinic [Placeholder]',
-    address: 'Main Road, Near KSRTC Terminal, Thiruvalla, Kerala 689101 [Placeholder]',
-    phone: '+91 469 2601234 [Placeholder]',
+    clinicName: 'PJ Medical Center',
+    address: 'Mammodu, Kollam, Kerala',
+    phone: '+91 82821038615',
     regNumber: 'KL/TVL/2026/001 [Placeholder]',
     gstNote: 'GST configuration pending - confirm with accountant.',
   });
+  const [staffAccounts, setStaffAccounts] = useState<StaffAccount[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [drugs, setDrugs] = useState<DrugItem[]>([]);
@@ -158,6 +186,8 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [visits, setVisits] = useState<TokenVisit[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
+  const [patientLedger, setPatientLedger] = useState<PatientLedgerEntry[]>([]);
+  const [paymentLedger, setPaymentLedger] = useState<PaymentLedgerEntry[]>([]);
   const [shifts, setShifts] = useState<ShiftRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
@@ -197,6 +227,20 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }
   };
 
+  const login = (staff: StaffAccount) => {
+    setRoleState(staff.role);
+    setUserNameState(staff.name);
+    localStorage.setItem('pj_role', staff.role);
+    localStorage.setItem('pj_username', staff.name);
+    localStorage.setItem('pj_isAuthenticated', 'true');
+    setIsAuthenticated(true);
+  };
+
+  const logout = () => {
+    localStorage.removeItem('pj_isAuthenticated');
+    setIsAuthenticated(false);
+  };
+
   const setUserName = (name: string) => {
     setUserNameState(name);
     localStorage.setItem('pj_username', name);
@@ -208,6 +252,7 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       'Content-Type': 'application/json',
       'x-clinic-role': role,
       'x-clinic-user': userName,
+      'x-clinic-user-id': `${role}:${userName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
     };
   }, [role, userName]);
 
@@ -222,6 +267,7 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       console.warn('Could not cache clinic state for offline use:', error);
     }
     if (data.settings) setSettings(data.settings);
+    if (data.staffAccounts) setStaffAccounts(data.staffAccounts);
     if (data.doctors) setDoctors(data.doctors);
     if (data.rooms) setRooms(data.rooms);
     if (data.drugs) setDrugs(data.drugs);
@@ -232,6 +278,8 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     if (data.patients) setPatients(data.patients);
     if (data.visits) setVisits(data.visits);
     if (data.bills) setBills(data.bills);
+    if (data.patientLedger) setPatientLedger(data.patientLedger);
+    if (data.paymentLedger) setPaymentLedger(data.paymentLedger);
     if (data.shifts) setShifts(data.shifts);
     if (data.auditLogs) setAuditLogs(data.auditLogs);
   }, []);
@@ -378,6 +426,54 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }
     } catch (err: any) {
       showToast('error', err.message || 'Network error saving allergies to server.', 'Network Error');
+      return false;
+    }
+  };
+
+  const updatePatientPastHistory = async (patientId: string, pastHistory: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/patients/${patientId}/past-history`, {
+        method: 'PATCH',
+        headers: getHeaders(),
+        body: JSON.stringify({ pastHistory }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const savedPastHistory = typeof data.pastHistory === 'string' ? data.pastHistory : pastHistory;
+        setPatients((prev) =>
+          prev.map((p) =>
+            p.id === patientId || p.mrn === patientId ? { ...p, pastHistory: savedPastHistory } : p
+          )
+        );
+        showToast(
+          'success',
+          `Past medical history saved for ${data.patient?.name || 'patient'}.`,
+          'Past History Saved'
+        );
+        return true;
+      } else {
+        showToast('error', data.error || 'Failed to save past history to server.', 'Save Failed');
+        return false;
+      }
+    } catch (err: any) {
+      showToast('error', err.message || 'Network error saving past history to server.', 'Network Error');
+      return false;
+    }
+  };
+
+  const updatePatientDiscount = async (patientId: string, discount: { type: 'percentage' | 'fixed'; value: number; reason: string }): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/patients/${patientId}/discount`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify(discount) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast('error', data.error || 'Failed to grant patient discount.');
+        return false;
+      }
+      if (data.patient) setPatients((previous) => previous.map((patient) => patient.id === patientId ? data.patient : patient));
+      showToast('success', `One-time discount granted to ${data.patient?.name || 'patient'}.`);
+      return true;
+    } catch {
+      showToast('error', 'Network error granting patient discount.');
       return false;
     }
   };
@@ -531,12 +627,12 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }
   };
 
-  const billProcedures = async (visitId: string, paymentMethod: PaymentMethod, upiRef?: string): Promise<boolean> => {
+  const billProcedures = async (visitId: string, paymentMethod: PaymentMethod, upiRef?: string, discountAmount?: number, discountReason?: string): Promise<boolean> => {
     try {
       const res = await fetch('/api/bills/procedure', {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ visitId, paymentMethod, upiRef }),
+        body: JSON.stringify({ visitId, paymentMethod, upiRef, discountAmount, discountReason }),
       });
       const result = await res.json();
       if (!res.ok) {
@@ -702,6 +798,29 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     } catch { showToast('error', 'Failed to generate retail pharmacy bill.'); return false; }
   };
 
+  const returnPharmacyItems = async (data: { billId: string; items?: { itemIndex: number; qty: number }[]; amount?: number; fullRefund?: boolean; reason: string; refundMethod: 'cash' | 'upi' | 'card'; idempotencyKey?: string }): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/pharmacy/return-items', { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast('error', result.error || `Failed to process pharmacy return (${res.status}).`); return false; }
+      showToast('success', `Return requested for approval. ₹${result.refund?.amount || 0} awaiting Accounts approval.`);
+      return true;
+    } catch {
+      showToast('error', 'Failed to request pharmacy return.');
+      return false;
+    }
+  };
+
+  const approveRefund = async (billId: string, refundId: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/bills/${billId}/refunds/${refundId}/approve`, { method: 'POST', headers: getHeaders() });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast('error', result.error || 'Failed to approve refund.'); return false; }
+      showToast('success', `Refund ₹${result.refund.amount} approved and posted.`);
+      return true;
+    } catch { showToast('error', 'Failed to approve refund.'); return false; }
+  };
+
   const stockInBatch = async (batchData: {
     drugId: string;
     batchNumber: string;
@@ -827,12 +946,12 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }
   };
 
-  const closeShift = async (shiftId: string, actualCashCounted: number): Promise<boolean> => {
+  const closeShift = async (shiftId: string, actualCashCounted: number, handedOverTo: string, handoverNotes?: string): Promise<boolean> => {
     try {
       const res = await fetch(`/api/shifts/${shiftId}/close`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ actualCashCounted }),
+        body: JSON.stringify({ actualCashCounted, handedOverTo, handoverNotes }),
       });
       const result = await res.json();
       if (!res.ok) {
@@ -850,22 +969,46 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }
   };
 
-  const voidBill = async (billId: string, reason: string, approvedBy: string, approverRole: string): Promise<boolean> => {
+  const voidBill = async (billId: string, reason: string): Promise<boolean> => {
     try {
       const res = await fetch(`/api/bills/${billId}/void`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ reason, approvedBy, approverRole }),
+        body: JSON.stringify({ reason }),
       });
       const result = await res.json();
       if (!res.ok) {
         showToast('error', result.error || 'Failed to void invoice.');
         return false;
       }
-      showToast('warning', `Invoice ${result.bill.invoiceNo} has been marked as VOIDED. Recorded in audit trail.`);
+      if (result.requiresApproval) {
+        showToast('warning', `Cancellation requested for invoice ${result.bill.invoiceNo}. Awaiting Accounts approval.`);
+      } else {
+        showToast('warning', `Invoice ${result.bill.invoiceNo} has been marked as VOIDED. Recorded in audit trail.`);
+      }
       return true;
     } catch (err) {
       showToast('error', 'Failed to void invoice.');
+      return false;
+    }
+  };
+
+  const requestRefund = async (data: { billId: string; amount?: number; fullRefund?: boolean; reason: string; refundMethod: 'cash' | 'upi' | 'card'; idempotencyKey?: string }): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/bills/${data.billId}/refund`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(data),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast('error', result.error || 'Failed to request refund.');
+        return false;
+      }
+      showToast('success', `Refund requested for Accounts approval. ₹${result.refund?.amount || 0}.`);
+      return true;
+    } catch {
+      showToast('error', 'Failed to request refund.');
       return false;
     }
   };
@@ -885,6 +1028,48 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       return true;
     } catch (err) {
       showToast('error', 'Network error updating settings.');
+      return false;
+    }
+  };
+
+  const saveStaffAccount = async (staff: Partial<StaffAccount>): Promise<boolean> => {
+    const res = await fetch(staff.id ? `/api/staff/${staff.id}` : '/api/staff', {
+      method: staff.id ? 'PUT' : 'POST', headers: getHeaders(), body: JSON.stringify(staff),
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('error', result.error || 'Failed to save staff account.'); return false; }
+    if (result.state) applyStateSnapshot(result.state);
+    showToast('success', staff.id ? 'Staff account updated.' : 'Staff account created.');
+    return true;
+  };
+
+  const deleteStaffAccount = async (id: string): Promise<boolean> => {
+    const res = await fetch(`/api/staff/${id}`, { method: 'DELETE', headers: getHeaders() });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('error', result.error || 'Failed to remove staff account.'); return false; }
+    if (result.state) applyStateSnapshot(result.state);
+    showToast('success', 'Staff account deactivated.');
+    return true;
+  };
+
+  const updateDoctorSchedule = async (doctorId: DoctorId, schedule: Partial<Doctor>): Promise<boolean> => {
+    const res = await fetch(`/api/doctors/${doctorId}/schedule`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify(schedule) });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('error', result.error || 'Failed to update doctor schedule.'); return false; }
+    if (result.state) applyStateSnapshot(result.state); else if (result.id) setDoctors((current) => current.map((doctor) => doctor.id === doctorId ? { ...doctor, ...result } : doctor));
+    showToast('success', 'Doctor schedule and room assignment updated.');
+    return true;
+  };
+
+  const recordDocumentPrint = async (documentType: 'receipt' | 'prescription', documentId: string): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/documents/print', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ documentType, documentId }),
+      });
+      return res.ok;
+    } catch {
       return false;
     }
   };
@@ -915,7 +1100,12 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         setRole,
         userName,
         setUserName,
+        isAuthenticated,
+        login,
+        logout,
         settings,
+        staffAccounts,
+        fallbackStaffAccounts: FALLBACK_STAFF_ACCOUNTS,
         doctors,
         rooms,
         drugs,
@@ -926,6 +1116,8 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         patients,
         visits,
         bills,
+        patientLedger,
+        paymentLedger,
         shifts,
         auditLogs,
         currentDoctorId,
@@ -943,6 +1135,8 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         showConfirm,
         registerPatient,
         updatePatientAllergies,
+        updatePatientPastHistory,
+        updatePatientDiscount,
         createTokenVisit,
         callNextToken,
         saveCaseSheet,
@@ -960,6 +1154,8 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         cancelPharmacyDispensing,
         billAndCompletePharmacy,
         billRetailPharmacy,
+        returnPharmacyItems,
+        approveRefund,
         stockInBatch,
         writeOffBatch,
         createTemplate,
@@ -968,8 +1164,13 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         openShift,
         closeShift,
         voidBill,
+        requestRefund,
         updateClinicSettings,
         resetDemoData,
+        saveStaffAccount,
+        deleteStaffAccount,
+        updateDoctorSchedule,
+        recordDocumentPrint,
       }}
     >
       {children}

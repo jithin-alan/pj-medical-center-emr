@@ -17,6 +17,9 @@ import {
 } from 'lucide-react';
 import { PatientJourneyBar } from '../components/PatientJourneyBar';
 
+const findProcedureBillItem = (items: { name: string; qty: number }[], procedureName: string) =>
+  items.find((item) => item.name.replace(/^\[(Procedure|Lab)\]\s*/, '').trim() === procedureName.trim());
+
 export const NurseScreen: React.FC = () => {
   const {
     visits,
@@ -28,6 +31,10 @@ export const NurseScreen: React.FC = () => {
     markProcedureNotGiven,
     showToast,
   } = useClinic();
+
+  // Memoized lookup maps for efficient O(1) access
+  const doctorMap = useMemo(() => new Map(doctors.map((d) => [d.id, d])), [doctors]);
+  const patientMap = useMemo(() => new Map(patients.map((p) => [p.id, p])), [patients]);
 
   const [activeTab, setActiveTab] = useState<'active_queue' | 'fulfilled_history'>('active_queue');
 
@@ -52,8 +59,8 @@ export const NurseScreen: React.FC = () => {
   const [historySearch, setHistorySearch] = useState('');
 
   const activeVisit = visits.find((v) => v.id === selectedVisitId) || nurseQueue[0];
-  const activePatient = patients.find((p) => p.id === activeVisit?.patientId);
-  const activeDoctor = doctors.find((d) => d.id === activeVisit?.doctorId);
+  const activePatient = activeVisit ? patientMap.get(activeVisit.patientId) : undefined;
+  const activeDoctor = activeVisit ? doctorMap.get(activeVisit.doctorId) : undefined;
 
   // Find the procedure bill for the active visit
   const procedureBill = useMemo(() => {
@@ -83,7 +90,7 @@ export const NurseScreen: React.FC = () => {
 
     // Check mismatch
     if (procedureBill) {
-      const billedItem = procedureBill.items.find((i) => i.name === proc.name);
+      const billedItem = findProcedureBillItem(procedureBill.items, proc.name);
       if (!billedItem) {
         showToast('error', `Invoice mismatch: "${proc.name}" does not appear on Reception Invoice #${procedureBill.invoiceNo}!`, 'Order Mismatch');
         return;
@@ -137,13 +144,13 @@ export const NurseScreen: React.FC = () => {
     }[] = [];
 
     visits.forEach((v) => {
-      const pat = patients.find((p) => p.id === v.patientId);
+      const pat = patientMap.get(v.patientId);
       if (!pat) return;
 
       const givenProcs = v.procedureOrders.filter((p) => p.nurseGiven);
       if (givenProcs.length === 0) return;
 
-      const doc = doctors.find((d) => d.id === v.doctorId);
+      const doc = doctorMap.get(v.doctorId);
 
       list.push({
         visitId: v.id,
@@ -359,7 +366,7 @@ export const NurseScreen: React.FC = () => {
                         const isBilled = proc.status === 'BILLED' || (!isGiven && proc.billed);
 
                         // Check mismatch against procedure bill
-                        const billedItem = procedureBill?.items.find((i) => i.name === proc.name);
+                        const billedItem = procedureBill ? findProcedureBillItem(procedureBill.items, proc.name) : undefined;
                         const hasItemMismatch = isBilled && procedureBill && !billedItem;
                         const hasQtyMismatch = isBilled && billedItem && billedItem.qty < proc.qty;
 

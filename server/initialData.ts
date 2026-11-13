@@ -11,44 +11,73 @@ import {
   Bill,
   ShiftRecord,
   AuditLog,
+  StaffAccount,
   ClinicSettings
 } from './types';
 
 export const INITIAL_SETTINGS: ClinicSettings = {
-  clinicName: 'PJ Medical Clinic [Placeholder]',
-  address: 'Main Road, Near KSRTC Terminal, Thiruvalla, Kerala 689101 [Placeholder]',
-  phone: '+91 469 2601234 [Placeholder]',
+  clinicName: 'PJ Medical Center',
+  address: 'Mammodu, Kollam, Kerala',
+  phone: '+91 82821038615',
   regNumber: 'KL/TVL/2026/001 [Placeholder]',
   gstNote: 'GST configuration pending - confirm with accountant.',
 };
 
+export const INITIAL_STAFF_ACCOUNTS: StaffAccount[] = [
+  { id: 'staff-admin', name: 'Clinic Administrator', email: 'admin@pjmedical.local', phone: '', role: 'admin', modules: ['admin', 'audit', 'accounts'], active: true, shift: 'Shift A', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'staff-doc-1', name: 'Dr. Jithin Mohan', email: 'jithin.mohan@pjmedical.local', phone: '', role: 'doctor', modules: ['doctor'], active: true, shift: 'Shift A', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'staff-doc-2', name: 'Dr. Poornima', email: 'poornima@pjmedical.local', phone: '', role: 'doctor', modules: ['doctor'], active: true, shift: 'Shift B', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'staff-doc-3', name: 'Dr. X', email: 'dr.x@pjmedical.local', phone: '', role: 'doctor', modules: ['doctor'], active: true, shift: 'Shift C', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'staff-nurse-1', name: 'Nurse Asha Kumar', email: 'asha.kumar@pjmedical.local', phone: '', role: 'nurse', modules: ['nurse', 'receptionist'], active: true, shift: 'Shift A', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'staff-nurse-2', name: 'Nurse Sreeja Das', email: 'sreeja.das@pjmedical.local', phone: '', role: 'nurse', modules: ['nurse', 'receptionist', 'pharmacist'], active: true, shift: 'Shift A', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'staff-nurse-3', name: 'Nurse Priya Raj', email: 'priya.raj@pjmedical.local', phone: '', role: 'nurse', modules: ['nurse', 'receptionist'], active: true, shift: 'Shift B', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'staff-nurse-4', name: 'Nurse Divya Lal', email: 'divya.lal@pjmedical.local', phone: '', role: 'nurse', modules: ['nurse', 'receptionist', 'pharmacist'], active: true, shift: 'Shift C', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'staff-phm-1', name: 'Pharmacist Arun S', email: 'arun.s@pjmedical.local', phone: '', role: 'pharmacist', modules: ['pharmacist'], active: true, shift: 'Shift A', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'staff-phm-2', name: 'Pharmacist Nisha Varma', email: 'nisha.varma@pjmedical.local', phone: '', role: 'pharmacist', modules: ['pharmacist'], active: true, shift: 'Shift B', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+];
+
 export const INITIAL_DOCTORS: Doctor[] = [
   {
     id: 'doc-1',
-    name: 'Doctor 1 (placeholder)',
+    name: 'Dr. Jithin Mohan',
     specialty: 'General Medicine & Diabetology',
     qualification: 'MBBS, MD (Gen Med)',
     registrationNumber: 'TCMC-2015-8492 [Placeholder]',
     tokenPrefix: 'D1',
     consultationFee: 300,
+    shift: 'Shift A',
+    startTime: '08:00',
+    endTime: '14:00',
+    workingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    roomId: 'room-1',
   },
   {
     id: 'doc-2',
-    name: 'Doctor 2 (placeholder)',
+    name: 'Dr. Poornima',
     specialty: 'Consultant Pediatrician',
     qualification: 'MBBS, DCH, DNB (Peds)',
     registrationNumber: 'TCMC-2018-9120 [Placeholder]',
     tokenPrefix: 'D2',
     consultationFee: 300,
+    shift: 'Shift B',
+    startTime: '14:00',
+    endTime: '20:00',
+    workingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    roomId: 'room-1',
   },
   {
     id: 'doc-3',
-    name: 'Doctor 3 (placeholder)',
+    name: 'Dr. X',
     specialty: 'Resident Medical Officer (RMO)',
     qualification: 'MBBS (Emergency & OP)',
     registrationNumber: 'TCMC-2022-1045 [Placeholder]',
     tokenPrefix: 'D3',
     consultationFee: 300,
+    shift: 'Shift C',
+    startTime: '20:00',
+    endTime: '23:00',
+    workingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    roomId: 'room-2',
   },
 ];
 
@@ -57,17 +86,17 @@ export const INITIAL_ROOMS: Room[] = [
     id: 'room-1',
     name: 'Room 1',
     occupiedByDoctorId: 'doc-1',
-    occupiedByDoctorName: 'Doctor 1 (placeholder)',
+    occupiedByDoctorName: 'Dr. Jithin Mohan',
     currentTokenNumber: 'D1-001',
     occupiedAt: '2026-10-25T09:15:00',
   },
   {
     id: 'room-2',
     name: 'Room 2',
-    occupiedByDoctorId: null,
-    occupiedByDoctorName: null,
+    occupiedByDoctorId: 'doc-2',
+    occupiedByDoctorName: 'Dr. Poornima',
     currentTokenNumber: null,
-    occupiedAt: null,
+    occupiedAt: '2026-10-25T14:00:00',
   },
 ];
 
@@ -323,6 +352,7 @@ export const INITIAL_PATIENTS: Patient[] = [
     sex: 'Male',
     phone: '+91 98471 23456',
     allergies: ['Penicillins'],
+    pastHistory: 'Type 2 Diabetes Mellitus (5 y), Hypertension (8 y), No previous surgeries.',
     registeredAt: '2026-10-24T10:00:00',
   },
   {
@@ -333,6 +363,7 @@ export const INITIAL_PATIENTS: Patient[] = [
     sex: 'Male',
     phone: '+91 98471 23456', // Same phone as pat-001 to demonstrate multiple patients per phone!
     allergies: ['Sulphonamides'],
+    pastHistory: 'Ischemic Heart Disease (3 y), Cerebrovascular Disease, Joint replacements (left knee).',
     registeredAt: '2026-10-24T14:15:00',
   },
   {
@@ -343,6 +374,7 @@ export const INITIAL_PATIENTS: Patient[] = [
     sex: 'Female',
     phone: '+91 94470 56789',
     allergies: [],
+    pastHistory: 'No significant chronic illnesses. No known drug allergies.',
     registeredAt: '2026-10-24T11:30:00',
   },
   {
@@ -353,6 +385,7 @@ export const INITIAL_PATIENTS: Patient[] = [
     sex: 'Female',
     phone: '+91 98950 11223',
     allergies: ['NSAIDs / Aspirin'],
+    pastHistory: 'Pregnancy (2 children). No chronic hypertension. History of severe menstrual cramps.',
     registeredAt: '2026-10-25T08:30:00',
   },
   {
@@ -363,6 +396,7 @@ export const INITIAL_PATIENTS: Patient[] = [
     sex: 'Male',
     phone: '+91 94460 33445',
     allergies: [],
+    pastHistory: 'No significant past medical history. Appendectomy (2018).',
     registeredAt: '2026-10-25T08:45:00',
   },
   {
@@ -373,6 +407,7 @@ export const INITIAL_PATIENTS: Patient[] = [
     sex: 'Female',
     phone: '+91 97455 66778',
     allergies: [],
+    pastHistory: 'Well-child checkups only. No chronic illnesses.',
     registeredAt: '2026-10-25T09:00:00',
   },
   ...[
@@ -381,16 +416,16 @@ export const INITIAL_PATIENTS: Patient[] = [
     ['dummy-03', 'PJ-000009', 'Joseph Varghese', 52, 'Male', '+91 98460 10009', 2],
     ['dummy-04', 'PJ-000010', 'Meera Krishnan', 41, 'Female', '+91 98460 10010', 3],
     ['dummy-05', 'PJ-000011', 'Rohan Mathew', 16, 'Male', '+91 98460 10011', 4],
-    ['dummy-06', 'PJ-000012', 'Lakshmi Devi', 61, 'Female', '+91 98460 10012', 0],
-    ['dummy-07', 'PJ-000013', 'Anand Pillai', 38, 'Male', '+91 98460 10013', 1],
-    ['dummy-08', 'PJ-000014', 'Sarah George', 27, 'Female', '+91 98460 10014', 2],
-    ['dummy-09', 'PJ-000015', 'Vishnu Kumar', 45, 'Male', '+91 98460 10015', 3],
-    ['dummy-10', 'PJ-000016', 'Nandana Raj', 12, 'Female', '+91 98460 10016', 4],
-    ['dummy-11', 'PJ-000017', 'Thomas Abraham', 67, 'Male', '+91 98460 10017', 0],
-    ['dummy-12', 'PJ-000018', 'Isha Mohan', 24, 'Female', '+91 98460 10018', 1],
-    ['dummy-13', 'PJ-000019', 'Arjun Das', 55, 'Male', '+91 98460 10019', 2],
-    ['dummy-14', 'PJ-000020', 'Sneha Philip', 36, 'Female', '+91 98460 10020', 3],
-    ['dummy-15', 'PJ-000021', 'Samuel Jacob', 19, 'Male', '+91 98460 10021', 4],
+    ['dummy-06', 'PJ-000012', 'Lakshmi Devi', 61, 'Female', '+91 98460 10012', 5],
+    ['dummy-07', 'PJ-000013', 'Anand Pillai', 38, 'Male', '+91 98460 10013', 5],
+    ['dummy-08', 'PJ-000014', 'Sarah George', 27, 'Female', '+91 98460 10014', 0],
+    ['dummy-09', 'PJ-000015', 'Vishnu Kumar', 45, 'Male', '+91 98460 10015', 1],
+    ['dummy-10', 'PJ-000016', 'Nandana Raj', 12, 'Female', '+91 98460 10016', 2],
+    ['dummy-11', 'PJ-000017', 'Thomas Abraham', 67, 'Male', '+91 98460 10017', 3],
+    ['dummy-12', 'PJ-000018', 'Isha Mohan', 24, 'Female', '+91 98460 10018', 4],
+    ['dummy-13', 'PJ-000019', 'Arjun Das', 55, 'Male', '+91 98460 10019', 5],
+    ['dummy-14', 'PJ-000020', 'Sneha Philip', 36, 'Female', '+91 98460 10020', 0],
+    ['dummy-15', 'PJ-000021', 'Samuel Jacob', 19, 'Male', '+91 98460 10021', 1],
   ].map(([id, mrn, name, age, sex, phone, doctorIndex], index) => ({
     id: String(id),
     mrn: String(mrn),
@@ -399,6 +434,7 @@ export const INITIAL_PATIENTS: Patient[] = [
     sex: String(sex) as 'Male' | 'Female' | 'Other',
     phone: String(phone),
     allergies: [],
+    pastHistory: doctorIndex === 0 ? 'Healthy, occasional viral infections.' : doctorIndex === 1 ? 'Seasonal allergies, no chronic conditions.' : doctorIndex === 2 ? 'Hypertension managed with lifestyle.' : doctorIndex === 3 ? 'Migraine (2–3 times/year), no medication use.' : doctorIndex === 4 ? 'Hyperthyroidism (on medication), regular follow-up.' : 'No significant chronic illnesses.',
     registeredAt: `2026-10-25T09:${String(25 + index).padStart(2, '0')}:00`,
   })),
 ];
@@ -450,7 +486,8 @@ export const INITIAL_VISITS: TokenVisit[] = [
     caseSheet: {
       chiefComplaint: 'Mild fever and dry cough for 2 days.',
       history: 'Seasonal change. No known comorbidities.',
-      vitals: { bp: '128/82', pulse: '78', temp: '99.0', spo2: '98', weight: '70' },
+      pastHistory: 'No known chronic illnesses. No previous surgeries.',
+      vitals: { bp: '128/82', pulse: '78', temp: '99.0', spo2: '98', weight: '70', respiratoryRate: '18' },
       examination: 'Mild pharyngeal erythema. Chest clear.',
       diagnosis: 'Acute Viral Pharyngitis',
       plan: 'Warm gargles, antipyretics.',
@@ -504,7 +541,8 @@ export const INITIAL_VISITS: TokenVisit[] = [
     caseSheet: {
       chiefComplaint: 'Fever, sore throat and myalgia for 2 days.',
       history: 'Onset 48 hrs ago after travel. No chills or rigors. No breathing difficulty.',
-      vitals: { bp: '130/84', pulse: '82', temp: '99.4', spo2: '98', weight: '71' },
+      pastHistory: 'No known chronic illnesses. Occasional seasonal allergies.',
+      vitals: { bp: '130/84', pulse: '82', temp: '99.4', spo2: '98', weight: '71', respiratoryRate: '20' },
       examination: 'Congested posterior pharyngeal wall. Bilateral tonsils mild erythema.',
       diagnosis: 'Acute Pharyngitis & Viral Fever',
       plan: 'Paracetamol, antiallergic, warm salt gargle.',
@@ -554,7 +592,8 @@ export const INITIAL_VISITS: TokenVisit[] = [
     caseSheet: {
       chiefComplaint: 'Vomiting 4 times, watery loose stools 3 times since early morning.',
       history: 'Severe weakness and dehydration signs. Ate restaurant food last evening.',
-      vitals: { bp: '100/70', pulse: '96', temp: '98.6', spo2: '99', weight: '54' },
+      pastHistory: 'No significant past medical history. No known allergies.',
+      vitals: { bp: '100/70', pulse: '96', temp: '98.6', spo2: '99', weight: '54', respiratoryRate: '16' },
       examination: 'Mild postural tachycardia. Dry oral mucosa. Periumbilical tenderness.',
       diagnosis: 'Acute Gastroenteritis with moderate dehydration',
       plan: 'Start IV NS 500ml stat, IV Ondansetron injection. Oral ORS once vomiting subsides.',
@@ -628,7 +667,8 @@ export const INITIAL_VISITS: TokenVisit[] = [
     caseSheet: {
       chiefComplaint: 'Bilateral wheezing, persistent dry cough worsening at night.',
       history: 'History of allergic bronchitis. Triggered by recent dust exposure.',
-      vitals: { bp: '100/68', pulse: '92', temp: '98.4', spo2: '96', weight: '22' },
+      pastHistory: 'Asthma since childhood. No smoking history.',
+      vitals: { bp: '100/68', pulse: '92', temp: '98.4', spo2: '96', weight: '22', respiratoryRate: '22' },
       examination: 'Bilateral expiratory wheezing on chest auscultation. No subcostal retractions.',
       diagnosis: 'Acute Bronchospasm / Mild Asthmatic Exacerbation',
       plan: 'Stat Nebulisation with Salbutamol and Budecort. Review breath sounds after 20 mins.',
@@ -747,7 +787,8 @@ export const INITIAL_VISITS: TokenVisit[] = [
       caseSheet: {
         chiefComplaint: complaint,
         history,
-        vitals: { bp: ['118/76', '120/80', '122/78'][visitIndex], pulse: ['76', '78', '74'][visitIndex], temp: ['98.6', '98.8', '98.4'][visitIndex], spo2: ['99', '98', '99'][visitIndex], weight: ['68', '68', '69'][visitIndex] },
+        pastHistory: 'No significant past medical history.',
+        vitals: { bp: ['118/76', '120/80', '122/78'][visitIndex], pulse: ['76', '78', '74'][visitIndex], temp: ['98.6', '98.8', '98.4'][visitIndex], spo2: ['99', '98', '99'][visitIndex], weight: ['68', '68', '69'][visitIndex], respiratoryRate: ['14', '16', '18'][visitIndex] },
         examination,
         diagnosis,
         plan,

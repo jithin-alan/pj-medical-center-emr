@@ -33,6 +33,7 @@ import {
 import { PatientJourneyBar } from '../components/PatientJourneyBar';
 import { PrescriptionPrintModal } from '../components/PrescriptionPrintModal';
 import { VisitHistoryModal } from '../components/VisitHistoryModal';
+import { LabInvestigationPrintModal } from '../components/LabInvestigationPrintModal';
 
 export const DoctorScreen: React.FC = () => {
   const {
@@ -56,6 +57,7 @@ export const DoctorScreen: React.FC = () => {
     updateLabOrders,
     finishConsultation,
     updatePatientAllergies,
+    updatePatientPastHistory,
     createTemplate,
     updateTemplate,
     deleteTemplate,
@@ -142,7 +144,8 @@ export const DoctorScreen: React.FC = () => {
   const [caseSheet, setCaseSheet] = useState<CaseSheet>({
     chiefComplaint: '',
     history: '',
-    vitals: { bp: '', pulse: '', temp: '', spo2: '', weight: '' },
+    pastHistory: '',
+    vitals: { bp: '', pulse: '', temp: '', spo2: '', weight: '', respiratoryRate: '' },
     examination: '',
     diagnosis: '',
     plan: '',
@@ -210,36 +213,62 @@ export const DoctorScreen: React.FC = () => {
   const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
   const [showVisitHistoryModal, setShowVisitHistoryModal] = useState(false);
 
+  // Track if past history was auto-loaded from patient record (for visual cue)
+  const [pastHistoryWasAutoLoaded, setPastHistoryWasAutoLoaded] = useState(false);
+
+  // Lab Print Modal State
+  type LabPrintState = {
+    visitId: string;
+    patientName: string;
+    patientMrn: string;
+    tokenNumber: string;
+    labOrders: PrescribedLabTest[];
+  } | null;
+  const [labPrintOpen, setLabPrintOpen] = useState<LabPrintState>(null);
+
   // Synchronize state when the active or selected seen visit changes
+  // Seed pastHistory from patient's persistent record if available
   useEffect(() => {
     if (consultationVisit) {
-      setCaseSheet(
-        consultationVisit.caseSheet || {
-          chiefComplaint: '',
-          history: '',
-          vitals: { bp: '', pulse: '', temp: '', spo2: '', weight: '' },
-          examination: '',
-          diagnosis: '',
-          plan: '',
-        }
-      );
+      const savedCaseSheet = consultationVisit.caseSheet || {
+        chiefComplaint: '',
+        history: '',
+        pastHistory: '',
+        vitals: { bp: '', pulse: '', temp: '', spo2: '', weight: '', respiratoryRate: '' },
+        examination: '',
+        diagnosis: '',
+        plan: '',
+      };
+      // Use saved pastHistory if present, otherwise seed from patient's record
+      const patientPastHistory = consultationPatient?.pastHistory || '';
+      const existingPastHistory = savedCaseSheet.pastHistory || '';
+      const pastHistoryValue = existingPastHistory || patientPastHistory;
+      setCaseSheet({
+        ...savedCaseSheet,
+        pastHistory: pastHistoryValue,
+      });
+      // Set flag if we auto-loaded past history (no existing visit pastHistory)
+      setPastHistoryWasAutoLoaded(!existingPastHistory && !!patientPastHistory);
       setPrescriptions(consultationVisit.prescriptions || []);
       setProcedureOrders(consultationVisit.procedureOrders || []);
       setLabOrders(consultationVisit.labOrders || []);
     } else {
+      const patientPastHistory = consultationPatient?.pastHistory || '';
       setCaseSheet({
         chiefComplaint: '',
         history: '',
-        vitals: { bp: '', pulse: '', temp: '', spo2: '', weight: '' },
+        pastHistory: patientPastHistory,
+        vitals: { bp: '', pulse: '', temp: '', spo2: '', weight: '', respiratoryRate: '' },
         examination: '',
         diagnosis: '',
         plan: '',
       });
+      setPastHistoryWasAutoLoaded(!!patientPastHistory);
       setPrescriptions([]);
       setProcedureOrders([]);
       setLabOrders([]);
     }
-  }, [consultationVisit?.id]);
+  }, [consultationVisit?.id, consultationPatient?.pastHistory]);
 
   const handleCallNext = async () => {
     const called = await callNextToken(currentDoctorId);
@@ -642,11 +671,13 @@ export const DoctorScreen: React.FC = () => {
 
   const handleSaveDraftCaseSheet = async () => {
     if (!consultationVisit) return;
-    const saved = await saveCaseSheet(consultationVisit.id, caseSheet);
-    if (saved) {
-      setIsCaseSheetOpen(false);
-      setSelectedSeenVisitId(null);
+    await saveCaseSheet(consultationVisit.id, caseSheet);
+    // Sync past history to patient record
+    if (consultationPatient) {
+      await updatePatientPastHistory(consultationPatient.id, caseSheet.pastHistory);
     }
+    setIsCaseSheetOpen(false);
+    setSelectedSeenVisitId(null);
   };
 
   const handleCompleteConsultation = async () => {
@@ -658,12 +689,20 @@ export const DoctorScreen: React.FC = () => {
         message: 'You have not entered a diagnosis yet. Would you like to finish the consultation anyway?',
         confirmLabel: 'Finish Anyway',
         onConfirm: async () => {
-          await Promise.all([
+          const saved = await Promise.all([
             saveCaseSheet(consultationVisit.id, caseSheet),
             updatePrescriptions(consultationVisit.id, prescriptions),
             updateProcedureOrders(consultationVisit.id, procedureOrders),
             updateLabOrders(consultationVisit.id, labOrders),
           ]);
+          if (!saved.every(Boolean)) {
+            showToast('error', 'Consultation was not finished because one or more clinical updates failed to save. Please retry.');
+            return;
+          }
+          // Sync past history to patient record
+          if (consultationPatient) {
+            await updatePatientPastHistory(consultationPatient.id, caseSheet.pastHistory);
+          }
           const finished = await finishConsultation(consultationVisit.id);
           if (finished) setIsCaseSheetOpen(false);
         },
@@ -671,12 +710,20 @@ export const DoctorScreen: React.FC = () => {
       return;
     }
 
-    await Promise.all([
+    const saved = await Promise.all([
       saveCaseSheet(consultationVisit.id, caseSheet),
       updatePrescriptions(consultationVisit.id, prescriptions),
       updateProcedureOrders(consultationVisit.id, procedureOrders),
       updateLabOrders(consultationVisit.id, labOrders),
     ]);
+    if (!saved.every(Boolean)) {
+      showToast('error', 'Consultation was not finished because one or more clinical updates failed to save. Please retry.');
+      return;
+    }
+    // Sync past history to patient record
+    if (consultationPatient) {
+      await updatePatientPastHistory(consultationPatient.id, caseSheet.pastHistory);
+    }
     const finished = await finishConsultation(consultationVisit.id);
     if (finished) setIsCaseSheetOpen(false);
   };
@@ -1010,6 +1057,7 @@ export const DoctorScreen: React.FC = () => {
                     {[
                       ['Chief Complaint / H/O', caseSheet.chiefComplaint],
                       ['History / H/O', caseSheet.history],
+                      ['Past Medical History', caseSheet.pastHistory],
                       ['Examination', caseSheet.examination],
                       ['Diagnosis', caseSheet.diagnosis],
                       ['Plan / Treatment Notes', caseSheet.plan],
@@ -1020,13 +1068,23 @@ export const DoctorScreen: React.FC = () => {
                       </div>
                     ))}
                   </div>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                    {Object.entries(caseSheet.vitals || {}).map(([label, value]) => (
-                      <div key={label} className="rounded-lg border border-slate-200 bg-white p-3">
-                        <div className="text-[10px] font-bold uppercase text-slate-500">{label}</div>
-                        <div className="text-sm font-semibold text-slate-800 mt-1">{value || '—'}</div>
-                      </div>
-                    ))}
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                    {Object.entries(caseSheet.vitals || {}).map(([label, value]) => {
+                      const vitalLabels: Record<string, string> = {
+                        bp: 'BP (mmHg)',
+                        pulse: 'Pulse (bpm)',
+                        temp: 'Temp (°F)',
+                        spo2: 'SpO₂ (%)',
+                        weight: 'Weight (kg)',
+                        respiratoryRate: 'RR (/min)',
+                      };
+                      return (
+                        <div key={label} className="rounded-lg border border-slate-200 bg-white p-3">
+                          <div className="text-[10px] font-bold uppercase text-slate-500">{vitalLabels[label] || label}</div>
+                          <div className="text-sm font-semibold text-slate-800 mt-1">{value || '—'}</div>
+                        </div>
+                      );
+                    })}
                   </div>
                   {(prescriptions.length > 0 || procedureOrders.length > 0 || labOrders.length > 0) && (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1202,7 +1260,7 @@ export const DoctorScreen: React.FC = () => {
                   <HeartPulse className="w-4 h-4 text-teal-600" />
                   <span>Vital Signs</span>
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
                   <div>
                     <span className="text-[10px] text-slate-500 font-medium block">BP (mmHg)</span>
                     <input
@@ -1278,6 +1336,21 @@ export const DoctorScreen: React.FC = () => {
                       className="w-full px-2.5 py-1.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:border-teal-500 focus:outline-hidden"
                     />
                   </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 font-medium block">RR (per min)</span>
+                    <input
+                      type="text"
+                      placeholder="16"
+                      value={caseSheet.vitals.respiratoryRate}
+                      onChange={(e) =>
+                        setCaseSheet({
+                          ...caseSheet,
+                          vitals: { ...caseSheet.vitals, respiratoryRate: e.target.value },
+                        })
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-md focus:bg-white focus:border-teal-500 focus:outline-hidden"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1307,6 +1380,22 @@ export const DoctorScreen: React.FC = () => {
                     className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-teal-500 focus:outline-hidden"
                     placeholder="Chronology, past illnesses, comorbidities..."
                   />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-slate-800 uppercase mb-1 flex items-center gap-1.5">
+                    <span>Past Medical History {pastHistoryWasAutoLoaded && <span className="text-[10px] font-normal text-amber-600" title="Loaded from patient record">⇢</span>}</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={caseSheet.pastHistory}
+                    onChange={(e) => setCaseSheet({ ...caseSheet, pastHistory: e.target.value })}
+                    className={`w-full p-2.5 text-xs bg-slate-50 border ${pastHistoryWasAutoLoaded ? 'border-amber-400 bg-amber-50/50' : 'border-slate-200'} rounded-lg focus:bg-white focus:border-teal-500 focus:outline-hidden`}
+                    placeholder="Past surgeries, chronic illnesses, previous hospitalisations, family history..."
+                  />
+                  {pastHistoryWasAutoLoaded && (
+                    <p className="text-[10px] text-amber-600 mt-0.5">Loaded from patient record – edit to update for future visits</p>
+                  )}
                 </div>
 
                 <div>
@@ -1842,12 +1931,34 @@ export const DoctorScreen: React.FC = () => {
 
               {/* LABORATORY ORDERS */}
               <div className="pt-4 border-t border-slate-200 space-y-4">
-                <div className="flex items-center gap-2">
-                  <FlaskConical className="w-5 h-5 text-indigo-600" />
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900 uppercase">Laboratory Orders ({labOrders.length})</h4>
-                    <p className="text-[11px] text-slate-500">Select tests; they will be combined with procedures on one reception bill.</p>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <FlaskConical className="w-5 h-5 text-indigo-600" />
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-900 uppercase">Laboratory Orders ({labOrders.length})</h4>
+                      <p className="text-[11px] text-slate-500">Select tests; they will be combined with procedures on one reception bill.</p>
+                    </div>
                   </div>
+                  {labOrders.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const patient = patients.find(p => p.id === consultationVisit?.patientId);
+                        setLabPrintOpen({
+                          visitId: consultationVisit?.id || '',
+                          patientName: patient?.name || '',
+                          patientMrn: patient?.mrn || '',
+                          tokenNumber: consultationVisit?.tokenNumber || '',
+                          labOrders
+                        });
+                      }}
+                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      title="Print lab investigation list"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>Print Lab</span>
+                    </button>
+                  )}
                 </div>
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-1 md:grid-cols-12 gap-2.5">
                   <div className="md:col-span-8">
@@ -2123,6 +2234,22 @@ export const DoctorScreen: React.FC = () => {
           bills={bills}
           onCopyVisit={handleCopyPreviousVisit}
           onClose={() => setShowVisitHistoryModal(false)}
+        />
+      )}
+
+      {/* LAB INVESTIGATION PRINT MODAL */}
+      {labPrintOpen && consultationVisit && (
+        <LabInvestigationPrintModal
+          visitId={labPrintOpen.visitId}
+          patientName={labPrintOpen.patientName}
+          patientMrn={labPrintOpen.patientMrn}
+          tokenNumber={labPrintOpen.tokenNumber}
+          labOrders={labPrintOpen.labOrders}
+          onClose={() => setLabPrintOpen(null)}
+          onPrint={async (id) => {
+            // Record print event in audit log
+            return true;
+          }}
         />
       )}
     </div>

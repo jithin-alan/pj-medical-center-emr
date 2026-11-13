@@ -8,7 +8,9 @@ import {
   User,
   Calendar,
   XCircle,
-  FileText
+  FileText,
+  Download,
+  Printer
 } from 'lucide-react';
 
 export const AuditLogScreen: React.FC = () => {
@@ -58,6 +60,21 @@ export const AuditLogScreen: React.FC = () => {
     });
   }, [auditLogs, searchTerm, roleFilter, actionFilter, patientMrnFilter, dateFilter]);
 
+  const exportAuditCsv = () => {
+    const escapeCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const rows = [
+      ['Timestamp', 'Role', 'User', 'Action', 'Target', 'Patient MRN', 'Details'],
+      ...filteredLogs.map((log) => [log.timestamp, log.role || log.userRole || '', log.userName, log.action, log.targetEntity, log.patientMrn || '', log.details]),
+    ];
+    const csv = '\ufeff' + rows.map((row) => row.map(escapeCell).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `audit-history-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const clearAllFilters = () => {
     setSearchTerm('');
     setRoleFilter('ALL');
@@ -89,7 +106,13 @@ export const AuditLogScreen: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 cursor-pointer">
+            <Printer className="w-3.5 h-3.5" /> Print History
+          </button>
+          <button onClick={exportAuditCsv} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-teal-600 rounded-lg hover:bg-teal-700 cursor-pointer">
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </button>
           <span className="text-xs font-mono font-bold text-slate-700 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
             {filteredLogs.length} of {auditLogs.length} Entries
           </span>

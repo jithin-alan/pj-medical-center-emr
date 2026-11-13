@@ -20,6 +20,9 @@ import {
   PrescribedMedicine,
   PrescribedProcedure,
   PatientStage,
+  PatientLedgerEntry,
+  PaymentLedgerEntry,
+  StaffAccount,
 } from './types';
 import {
   INITIAL_SETTINGS,
@@ -35,6 +38,7 @@ import {
   INITIAL_VISITS,
   INITIAL_BILLS,
   INITIAL_AUDIT_LOGS,
+  INITIAL_STAFF_ACCOUNTS,
 } from './initialData';
 
 // Simulated current clinic date
@@ -42,21 +46,164 @@ export const CURRENT_DATE = '2026-10-25';
 
 class ClinicDataStore {
   public settings: ClinicSettings = { ...INITIAL_SETTINGS };
-  public doctors: Doctor[] = JSON.parse(JSON.stringify(INITIAL_DOCTORS));
-  public rooms: Room[] = JSON.parse(JSON.stringify(INITIAL_ROOMS));
-  public drugs: DrugItem[] = JSON.parse(JSON.stringify(INITIAL_DRUGS));
-  public batches: DrugBatch[] = JSON.parse(JSON.stringify(INITIAL_BATCHES)).map((batch: DrugBatch) => ({
+  public staffAccounts: StaffAccount[] = structuredClone(INITIAL_STAFF_ACCOUNTS);
+  public doctors: Doctor[] = structuredClone(INITIAL_DOCTORS);
+  public rooms: Room[] = structuredClone(INITIAL_ROOMS);
+  public drugs: DrugItem[] = structuredClone(INITIAL_DRUGS);
+  public batches: DrugBatch[] = structuredClone(INITIAL_BATCHES).map((batch: DrugBatch) => ({
     ...batch,
     status: batch.status || (batch.quantity > 0 ? 'active' : 'depleted'),
   }));
-  public procedures: ProcedureCatalogueItem[] = JSON.parse(JSON.stringify(INITIAL_PROCEDURES));
-  public labTests: LabTestCatalogueItem[] = JSON.parse(JSON.stringify(INITIAL_LAB_TESTS));
-  public templates: ClinicalTemplate[] = JSON.parse(JSON.stringify(INITIAL_TEMPLATES));
-  public patients: Patient[] = JSON.parse(JSON.stringify(INITIAL_PATIENTS));
-  public shifts: ShiftRecord[] = JSON.parse(JSON.stringify(INITIAL_SHIFTS));
-  public visits: TokenVisit[] = JSON.parse(JSON.stringify(INITIAL_VISITS));
-  public bills: Bill[] = JSON.parse(JSON.stringify(INITIAL_BILLS));
-  public auditLogs: AuditLog[] = JSON.parse(JSON.stringify(INITIAL_AUDIT_LOGS));
+  public procedures: ProcedureCatalogueItem[] = structuredClone(INITIAL_PROCEDURES);
+  public labTests: LabTestCatalogueItem[] = structuredClone(INITIAL_LAB_TESTS);
+  public templates: ClinicalTemplate[] = structuredClone(INITIAL_TEMPLATES);
+  public patients: Patient[] = structuredClone(INITIAL_PATIENTS);
+  public shifts: ShiftRecord[] = structuredClone(INITIAL_SHIFTS);
+  public visits: TokenVisit[] = structuredClone(INITIAL_VISITS);
+  public bills: Bill[] = structuredClone(INITIAL_BILLS);
+  public patientLedger: PatientLedgerEntry[] = [];
+  public paymentLedger: PaymentLedgerEntry[] = [];
+  public auditLogs: AuditLog[] = structuredClone(INITIAL_AUDIT_LOGS);
+
+  constructor() {
+    const seen = new Set<string>();
+    for (const bill of this.bills) {
+      if (seen.has(bill.invoiceNo)) throw new Error(`Duplicate initial invoice number: ${bill.invoiceNo}`);
+      seen.add(bill.invoiceNo);
+      Object.defineProperty(bill, 'invoiceNo', {
+        value: bill.invoiceNo,
+        enumerable: true,
+        configurable: false,
+        writable: false,
+      });
+    }
+    this.rebuildLedgers();
+  }
+
+  private readonly documentCounters = new Map<string, number>();
+
+  private getFinancialYear(timestamp = new Date().toISOString()) {
+    const date = new Date(timestamp);
+    const year = date.getFullYear();
+    const startYear = date.getMonth() >= 3 ? year : year - 1;
+    return `${startYear}-${String(startYear + 1).slice(-2)}`;
+  }
+
+  public rebuildLedgers(additionalBill?: Bill) {
+    this.patientLedger = [];
+    this.paymentLedger = [];
+    const runningBalances = new Map<string, number>();
+    const sourceBills = additionalBill ? [additionalBill, ...this.bills] : this.bills;
+    const orderedBills = [...sourceBills].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+    for (const bill of orderedBills) {
+      const balance = runningBalances.get(bill.patientId) || 0;
+      const isVoid = bill.status === 'voided' || bill.status === 'cancelled';
+      if (!isVoid) {
+        const chargeBalance = balance + bill.total;
+        this.patientLedger.push({
+          id: `pl-${bill.id}-charge`, patientId: bill.patientId, patientMrn: bill.patientMrn,
+          visitId: bill.visitId, invoiceId: bill.id, invoiceNo: bill.invoiceNo,
+          type: 'charge', description: `${bill.type} invoice`, debit: bill.total, credit: 0,
+          runningBalance: chargeBalance, timestamp: bill.timestamp,
+        });
+        runningBalances.set(bill.patientId, chargeBalance);
+      }
+
+      const paid = bill.amountPaid ?? (isVoid ? 0 : bill.total);
+      if (paid > 0) {
+        const paymentBalance = (runningBalances.get(bill.patientId) || 0) - paid;
+        this.patientLedger.push({
+          id: `pl-${bill.id}-payment`, patientId: bill.patientId, patientMrn: bill.patientMrn,
+          visitId: bill.visitId, invoiceId: bill.id, invoiceNo: bill.invoiceNo,
+          type: 'payment', description: `Payment received for ${bill.invoiceNo}`, debit: 0, credit: paid,
+          runningBalance: paymentBalance, timestamp: bill.timestamp, reference: bill.upiRef,
+        });
+        this.paymentLedger.push({
+          id: `pay-${bill.id}`, invoiceId: bill.id, invoiceNo: bill.invoiceNo,
+          patientId: bill.patientId, patientMrn: bill.patientMrn, visitId: bill.visitId,
+          type: 'payment', method: bill.paymentMethod, amount: paid,
+          transactionReference: bill.upiRef, status: 'completed', shift: bill.shift,
+          cashierName: bill.cashierName, timestamp: bill.timestamp,
+        });
+        runningBalances.set(bill.patientId, paymentBalance);
+      }
+
+      for (const refund of bill.refunds?.filter((r) => r.status === 'completed') || []) {
+        const refundTimestamp = refund.approvedAt || refund.createdAt;
+        const refundBalance = (runningBalances.get(bill.patientId) || 0) + refund.amount;
+        this.patientLedger.push({
+          id: `pl-${refund.id}-refund`, patientId: bill.patientId, patientMrn: bill.patientMrn,
+          visitId: bill.visitId, invoiceId: bill.id, invoiceNo: bill.invoiceNo,
+          type: 'refund', description: `Refund ${refund.refundNo} for ${bill.invoiceNo}`, debit: refund.amount, credit: 0,
+          runningBalance: refundBalance, timestamp: refundTimestamp, reference: refund.id,
+        });
+        this.paymentLedger.push({
+          id: `pay-${refund.id}`, invoiceId: bill.id, invoiceNo: bill.invoiceNo,
+          patientId: bill.patientId, patientMrn: bill.patientMrn, visitId: bill.visitId,
+          type: 'refund', method: refund.method, amount: refund.amount, status: 'completed',
+          shift: bill.shift, cashierName: refund.approvedByName || refund.createdByName, timestamp: refundTimestamp,
+        });
+        runningBalances.set(bill.patientId, refundBalance);
+      }
+
+      if (isVoid) {
+        const voidBalance = (runningBalances.get(bill.patientId) || 0) - bill.total;
+        this.patientLedger.push({
+          id: `pl-${bill.id}-void`, patientId: bill.patientId, patientMrn: bill.patientMrn,
+          visitId: bill.visitId, invoiceId: bill.id, invoiceNo: bill.invoiceNo,
+          type: 'void', description: `Voided ${bill.invoiceNo}`, debit: 0, credit: bill.total,
+          runningBalance: voidBalance, timestamp: bill.voidTimestamp || bill.timestamp,
+        });
+        runningBalances.set(bill.patientId, voidBalance);
+      }
+    }
+  }
+
+  public finalizeInvoiceDocument(bill: Bill) {
+    if (this.bills.some((existing) => existing.invoiceNo === bill.invoiceNo)) {
+      throw new Error(`Duplicate invoice number: ${bill.invoiceNo}`);
+    }
+    if (bill.status === 'paid' || bill.status === 'finalized' || bill.status === 'partially_paid') {
+      bill.amountPaid = bill.amountPaid ?? bill.total;
+      bill.balanceDue = Math.max(0, bill.total - bill.amountPaid);
+    }
+    Object.defineProperty(bill, 'invoiceNo', {
+      value: bill.invoiceNo,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+    this.rebuildLedgers(bill);
+  }
+
+  public allocateInvoiceNumber(series: 'REC' | 'LAB' | 'PHM' | 'RPM', timestamp = new Date().toISOString()) {
+    const year = new Date(timestamp).getFullYear();
+    const financialYear = this.getFinancialYear(timestamp);
+    const key = `${series}-${year}`;
+
+    if (!this.documentCounters.has(key)) {
+      const prefix = `${series}-${year}-`;
+      const existingSequences = this.bills
+        .filter((bill) => bill.invoiceNo.startsWith(prefix))
+        .map((bill) => Number(bill.invoiceNo.slice(prefix.length)))
+        .filter(Number.isInteger);
+      this.documentCounters.set(key, existingSequences.length ? Math.max(...existingSequences) : 0);
+    }
+
+    const sequence = (this.documentCounters.get(key) || 0) + 1;
+    if (this.bills.some((bill) => bill.invoiceNo === `${series}-${year}-${String(sequence).padStart(4, '0')}`)) {
+      throw new Error(`Invoice sequence ${sequence} is already allocated.`);
+    }
+
+    this.documentCounters.set(key, sequence);
+    return {
+      invoiceNo: `${series}-${year}-${String(sequence).padStart(4, '0')}`,
+      documentSeries: series,
+      documentNumberSequence: sequence,
+      financialYear,
+    };
+  }
 
   // SSE connected clients
   private sseClients: Response[] = [];
@@ -163,6 +310,7 @@ class ClinicDataStore {
 
     return {
       settings: this.settings,
+      staffAccounts: this.staffAccounts,
       doctors: this.doctors,
       rooms: this.rooms,
       drugs: enrichedDrugs,
@@ -174,6 +322,8 @@ class ClinicDataStore {
       shifts: this.shifts,
       visits: this.visits,
       bills: this.bills,
+      patientLedger: this.patientLedger,
+      paymentLedger: this.paymentLedger,
       auditLogs: this.auditLogs,
       currentDate: CURRENT_DATE,
     };
@@ -185,17 +335,19 @@ class ClinicDataStore {
     const oldBillsCount = this.bills.length;
 
     // Reset clinical and billing entities
-    this.doctors = JSON.parse(JSON.stringify(INITIAL_DOCTORS));
-    this.rooms = JSON.parse(JSON.stringify(INITIAL_ROOMS));
-    this.drugs = JSON.parse(JSON.stringify(INITIAL_DRUGS));
-    this.batches = JSON.parse(JSON.stringify(INITIAL_BATCHES));
-    this.procedures = JSON.parse(JSON.stringify(INITIAL_PROCEDURES));
-    this.templates = JSON.parse(JSON.stringify(INITIAL_TEMPLATES));
-    this.patients = JSON.parse(JSON.stringify(INITIAL_PATIENTS));
-    this.shifts = JSON.parse(JSON.stringify(INITIAL_SHIFTS));
-    this.visits = JSON.parse(JSON.stringify(INITIAL_VISITS));
-    this.bills = JSON.parse(JSON.stringify(INITIAL_BILLS));
-    this.settings = JSON.parse(JSON.stringify(INITIAL_SETTINGS));
+    this.doctors = structuredClone(INITIAL_DOCTORS);
+    this.rooms = structuredClone(INITIAL_ROOMS);
+    this.drugs = structuredClone(INITIAL_DRUGS);
+    this.batches = structuredClone(INITIAL_BATCHES);
+    this.procedures = structuredClone(INITIAL_PROCEDURES);
+    this.templates = structuredClone(INITIAL_TEMPLATES);
+    this.patients = structuredClone(INITIAL_PATIENTS);
+    this.shifts = structuredClone(INITIAL_SHIFTS);
+    this.visits = structuredClone(INITIAL_VISITS);
+    this.bills = structuredClone(INITIAL_BILLS);
+    this.rebuildLedgers();
+    this.documentCounters.clear();
+    this.settings = structuredClone(INITIAL_SETTINGS);
 
     // Audit log is explicitly PRESERVED and an entry for the reset is appended!
     this.addAuditLog(

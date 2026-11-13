@@ -4,6 +4,19 @@
 
 export type Role = 'receptionist' | 'doctor' | 'nurse' | 'pharmacist' | 'laboratory' | 'accounts' | 'tv' | 'admin' | 'audit';
 
+export interface StaffAccount {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  role: Role;
+  modules: Role[];
+  active: boolean;
+  shift?: ShiftType;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type DoctorId = 'doc-1' | 'doc-2' | 'doc-3';
 
 export interface Doctor {
@@ -14,6 +27,11 @@ export interface Doctor {
   registrationNumber: string;
   tokenPrefix: string;
   consultationFee: number;
+  shift?: ShiftType;
+  startTime?: string;
+  endTime?: string;
+  workingDays?: string[];
+  roomId?: string;
 }
 
 export interface Room {
@@ -27,7 +45,7 @@ export interface Room {
 
 export type PaymentMethod = 'cash' | 'upi' | 'card';
 
-export type ShiftType = 'Shift A' | 'Shift B';
+export type ShiftType = 'Shift A' | 'Shift B' | 'Shift C';
 
 export interface ShiftRecord {
   id: string;
@@ -46,6 +64,11 @@ export interface ShiftRecord {
   refundsCount?: number;
   refundsTotal?: number;
   difference?: number;
+  handedOverTo?: string;
+  handoverNotes?: string;
+  handedOverAt?: string;
+  openedByUserId?: string;
+  closedByUserId?: string;
 }
 
 export interface Patient {
@@ -56,7 +79,20 @@ export interface Patient {
   sex: 'Male' | 'Female' | 'Other';
   phone: string; // +91 format
   allergies: string[];
+  pastHistory: string; // Patient-level chronic history carried across all consultations
   registeredAt: string;
+  discount?: PatientDiscount;
+  followUpUntil?: string; // YYYY-MM-DD until which follow-up visits are free
+  lastConsultationDate?: string; // YYYY-MM-DD of most recent paid consultation
+}
+
+export interface PatientDiscount {
+  type: 'percentage' | 'fixed';
+  value: number;
+  reason: string;
+  grantedBy: string;
+  grantedAt: string;
+  remainingUses: number;
 }
 
 export type PatientStage =
@@ -83,11 +119,13 @@ export interface Vitals {
   temp: string;    // e.g. 98.6 °F
   spo2: string;    // e.g. 99%
   weight: string;  // e.g. 68 kg
+  respiratoryRate: string; // e.g. 16 /min
 }
 
 export interface CaseSheet {
   chiefComplaint: string;
   history: string;
+  pastHistory: string;
   vitals: Vitals;
   examination: string;
   diagnosis: string;
@@ -231,38 +269,194 @@ export interface TokenVisit {
   consultationReceiptNo: string;
   procedureBillId?: string;
   pharmacyBillId?: string;
+  printCount?: number;
+  lastPrintedAt?: string;
+  isFollowUp?: boolean; // true when visit is a free follow-up within the 2-week window
+  followUpFreeUntil?: string; // YYYY-MM-DD copied from the patient's follow-up window
 }
 
 export interface BillItem {
+  drugId?: string;
   name: string;
+  description?: string;
+  serviceCode?: string;
   qty: number;
+  unit?: string;
   unitPrice: number;
+  discountAmount?: number;
+  subtotal?: number;
   total: number;
   dose?: string;
   duration?: string;
+  returnedQty?: number;
+}
+
+export interface DocumentCounter {
+  series: string;
+  financialYear: string;
+  locationCode: string;
+  counterCode?: string;
+  lastSequence: number;
+}
+
+export interface PaymentAllocation {
+  method: PaymentMethod | 'bank_transfer' | 'credit' | 'wallet';
+  amount: number;
+  reference?: string;
+  receivedAt: string;
+  status: 'pending' | 'completed' | 'failed' | 'reversed';
+}
+
+export interface RefundRecord {
+  id: string;
+  refundNo: string;
+  type: 'full' | 'partial';
+  items: { itemIndex: number; qty: number; amount: number }[];
+  amount: number;
+  reason: string;
+  method: PaymentMethod;
+  status: 'pending' | 'completed' | 'rejected';
+  idempotencyKey?: string;
+  createdByUserId: string;
+  createdByName: string;
+  createdAt: string;
+  approvedByUserId?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+}
+
+export interface DocumentAmendment {
+  id: string;
+  type: 'void' | 'cancel' | 'credit_note';
+  reason: string;
+  amount: number;
+  originalInvoiceId: string;
+  originalInvoiceNo: string;
+  createdByUserId: string;
+  createdByName: string;
+  approvedByUserId: string;
+  approvedByName: string;
+  timestamp: string;
 }
 
 export interface Bill {
   id: string;
   invoiceNo: string; // e.g. REC-2026-0001, PHM-2026-0001
   type: 'consultation' | 'procedure' | 'pharmacy' | 'lab';
+  documentSeries?: string;
+  documentNumberSequence?: number;
+  financialYear?: string;
+  locationCode?: string;
+  counterCode?: string;
   visitId: string;
   patientId: string;
   patientName: string;
   patientMrn: string;
+  patientSnapshot?: {
+    name: string;
+    mrn: string;
+    phone?: string;
+    address?: string;
+  };
+  doctorId?: DoctorId;
+  doctorName?: string;
+  department?: string;
   items: BillItem[];
   subtotal: number;
+  discountAmount?: number;
+  discountReason?: string;
   tax: number;
+  roundingAmount?: number;
   total: number;
+  amountPaid?: number;
+  balanceDue?: number;
+  currency?: 'INR';
   paymentMethod: PaymentMethod;
+  paymentAllocations?: PaymentAllocation[];
   upiRef?: string;
+  cashierUserId?: string;
   cashierName: string;
   shift: ShiftType;
+  shiftId?: string;
   timestamp: string;
-  status: 'paid' | 'voided';
+  finalizedAt?: string;
+  status: 'draft' | 'finalized' | 'paid' | 'partially_paid' | 'refunded' | 'partially_refunded' | 'voided' | 'cancelled';
+  amendments?: DocumentAmendment[];
+  refunds?: RefundRecord[];
   voidReason?: string;
   voidApprovedBy?: string;
   voidTimestamp?: string;
+  cancellationRequest?: {
+    status: 'pending';
+    reason: string;
+    requestedByUserId: string;
+    requestedByName: string;
+    requestedAt: string;
+  };
+  stockDeductions?: { drugId: string; drugName: string; batchId?: string; batchNumber: string; qty: number }[];
+  returnedAt?: string;
+  returnedAmount?: number;
+  printCount?: number;
+  lastPrintedAt?: string;
+}
+
+export interface PatientLedgerEntry {
+  id: string;
+  patientId: string;
+  patientMrn: string;
+  visitId?: string;
+  invoiceId?: string;
+  invoiceNo?: string;
+  type: 'charge' | 'payment' | 'advance' | 'refund' | 'credit' | 'adjustment' | 'void';
+  description: string;
+  debit: number;
+  credit: number;
+  runningBalance: number;
+  timestamp: string;
+  reference?: string;
+}
+
+export interface PaymentLedgerEntry {
+  id: string;
+  invoiceId?: string;
+  invoiceNo?: string;
+  patientId: string;
+  patientMrn: string;
+  visitId?: string;
+  type: 'payment' | 'advance' | 'refund' | 'reversal';
+  method: PaymentMethod;
+  amount: number;
+  transactionReference?: string;
+  status: 'pending' | 'completed' | 'failed' | 'reversed';
+  shiftId?: string;
+  shift: ShiftType;
+  cashierUserId?: string;
+  cashierName: string;
+  counterCode?: string;
+  timestamp: string;
+}
+
+export interface ReceiptDocument {
+  id: string;
+  receiptNo: string;
+  invoiceId: string;
+  invoiceNo: string;
+  patientId: string;
+  patientName: string;
+  patientMrn: string;
+  visitId?: string;
+  amountReceived: number;
+  balanceDue: number;
+  currency: 'INR';
+  payments: PaymentAllocation[];
+  cashierUserId?: string;
+  cashierName: string;
+  counterCode?: string;
+  shiftId?: string;
+  shift: ShiftType;
+  timestamp: string;
+  reprintCount?: number;
+  lastReprintedAt?: string;
 }
 
 export interface AuditLog {

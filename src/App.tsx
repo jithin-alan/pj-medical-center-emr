@@ -9,6 +9,7 @@ import { AccountsScreen } from './screens/AccountsScreen';
 import { AdminScreen } from './screens/AdminScreen';
 import { TvDisplayScreen } from './screens/TvDisplayScreen';
 import { AuditLogScreen } from './screens/AuditLogScreen';
+import { LoginScreen } from './screens/LoginScreen';
 import { ThermalReceiptModal } from './components/ThermalReceiptModal';
 import { PrescriptionPrintModal } from './components/PrescriptionPrintModal';
 import { VisitHistoryModal } from './components/VisitHistoryModal';
@@ -26,11 +27,12 @@ import {
   X,
   Settings,
   User,
-  Edit2
+  Edit2,
+  LogOut
 } from 'lucide-react';
 import { Role } from './types';
 
-const ClinicAppContent: React.FC = () => {
+export const ClinicAppContent: React.FC = () => {
   const {
     role,
     setRole,
@@ -43,8 +45,11 @@ const ClinicAppContent: React.FC = () => {
     activeHistoryPatient,
     setActiveHistoryPatient,
     auditLogs,
+    staffAccounts,
     settings,
     isConnected,
+    isAuthenticated,
+    logout,
   } = useClinic();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -62,6 +67,11 @@ const ClinicAppContent: React.FC = () => {
   useEffect(() => {
     setTempUserName(userName);
   }, [userName]);
+
+  // Show login screen if not authenticated (except for TV mode which uses URL hash)
+  if (!isAuthenticated) {
+    return <LoginScreen />;
+  }
 
   // If in TV display mode, render dedicated TV screen
   if (role === 'tv') {
@@ -94,6 +104,10 @@ const ClinicAppContent: React.FC = () => {
     { role: 'tv', label: 'TV Display', icon: <Tv className="w-4 h-4" /> },
   ];
 
+  const activeStaff = staffAccounts.find((staff) => staff.active && staff.name.toLowerCase() === userName.toLowerCase());
+  const permittedModules = activeStaff?.modules;
+  const visibleNavItems = permittedModules ? navItems.filter((item) => permittedModules.includes(item.role as Role)) : navItems;
+
   const handleSaveUserName = (e: React.FormEvent) => {
     e.preventDefault();
     if (tempUserName.trim()) {
@@ -120,22 +134,20 @@ const ClinicAppContent: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
           {/* Clinic Brand Lockup */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center font-black text-lg shadow-sm">
-              PJ
-            </div>
+            <img src="/clinic-logo.jpg" alt="PJ Medical Center logo" className="w-10 h-10 rounded-xl object-contain" />
             <div>
               <h1 className="text-base font-extrabold tracking-tight text-slate-900 leading-tight">
                 {settings.clinicName.replace('[Placeholder]', '').trim()}
               </h1>
               <p className="text-[11px] text-slate-500 font-medium">
-                Thiruvalla, Kerala · Outpatient EMR & Billing
+                Mammodu, Kollam · Outpatient EMR & Billing
               </p>
             </div>
           </div>
 
           {/* Desktop Role Navigation Switcher (Large, Touch-Friendly Buttons) */}
           <nav className="hidden lg:flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
-            {navItems.map((item) => (
+            {visibleNavItems.map((item) => (
               <button
                 key={item.role}
                 onClick={() => setRole(item.role as Role)}
@@ -164,8 +176,18 @@ const ClinicAppContent: React.FC = () => {
               <Edit2 className="w-3 h-3 text-slate-400 group-hover:text-slate-600" />
             </button>
 
-            {/* Audit Log Shortcut Button */}
+            {/* Logout Button */}
             <button
+              onClick={logout}
+              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-600 bg-slate-50 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 rounded-lg transition-colors cursor-pointer"
+              title="Log out and return to login screen"
+            >
+              <LogOut className="w-3.5 h-3.5 text-slate-400 group-hover:text-rose-500" />
+              <span className="hidden sm:inline">Logout</span>
+            </button>
+
+            {/* Audit Log Shortcut Button */}
+            {(!permittedModules || permittedModules.includes('audit')) && <button
               onClick={() => setRole('audit' as any)}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
                 (role as string) === 'audit'
@@ -179,7 +201,7 @@ const ClinicAppContent: React.FC = () => {
               <span className="font-mono text-[10px] bg-slate-100 px-1.5 py-0.2 rounded text-slate-600">
                 {auditLogs.length}
               </span>
-            </button>
+            </button>}
 
             {/* Mobile Menu Toggle */}
             <button
@@ -194,7 +216,7 @@ const ClinicAppContent: React.FC = () => {
         {/* Mobile Navigation Drawer */}
         {mobileMenuOpen && (
           <div className="lg:hidden px-4 py-3 bg-slate-50 border-t border-slate-200 space-y-1">
-            {navItems.map((item) => (
+            {visibleNavItems.map((item) => (
               <button
                 key={item.role}
                 onClick={() => {

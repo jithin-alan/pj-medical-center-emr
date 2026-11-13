@@ -1,5 +1,40 @@
 @import "tailwindcss";
 
+@theme {
+  --color-teal-50: #e0f2f1;
+  --color-teal-100: #e8f5e9;
+  --color-teal-200: #b2dfdb;
+  --color-teal-300: #80cbc4;
+  --color-teal-400: #4db6ac;
+  --color-teal-500: #00a896;
+  --color-teal-600: #008f82;
+  --color-teal-700: #00796b;
+  --color-teal-800: #005f56;
+  --color-teal-900: #004d40;
+  --color-blue-50: #e3f2fd;
+  --color-blue-100: #bbdefb;
+  --color-blue-500: #00529b;
+  --color-blue-600: #00529b;
+  --color-blue-700: #003f78;
+  --color-slate-50: #f5f8fb;
+  --color-slate-100: #edf2f7;
+  --color-slate-200: #dbe4ee;
+  --color-slate-300: #c3cfdb;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #718096;
+  --color-slate-600: #53657a;
+  --color-slate-700: #33465e;
+  --color-slate-800: #1b2c43;
+  --color-slate-900: #0a192f;
+  --color-amber-500: #ffb300;
+  --color-orange-500: #ff7043;
+  --color-orange-600: #e85d35;
+  --color-orange-700: #c74a2b;
+  --color-rose-400: #ffab91;
+  --color-rose-500: #ff7043;
+  --color-indigo-500: #5c6bc0;
+}
+
 @layer base {
   body {
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;

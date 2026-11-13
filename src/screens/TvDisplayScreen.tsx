@@ -1,10 +1,13 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useClinic } from '../context/ClinicContext';
 import { Volume2, Maximize2, Minimize2, Tv, Clock, Sparkles } from 'lucide-react';
 import { playClinicChime } from '../utils/audioChime';
 
 export const TvDisplayScreen: React.FC = () => {
   const { visits, rooms, doctors, latestCalledToken } = useClinic();
+
+  // Memoized lookup map for efficient O(1) doctor access
+  const doctorMap = useMemo(() => new Map(doctors.map((d) => [d.id, d])), [doctors]);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const prevCalledRef = useRef<string | null>(null);
@@ -191,7 +194,7 @@ export const TvDisplayScreen: React.FC = () => {
             ) : (
               <div className="space-y-2 flex-1">
                 {calledVisits.map((v, i) => {
-                  const doc = doctors.find((d) => d.id === v.doctorId);
+                  const doc = doctorMap.get(v.doctorId);
                   const isLatest = i === 0;
 
                   return (
@@ -259,7 +262,7 @@ export const TvDisplayScreen: React.FC = () => {
           ) : (
             <div className="flex-1 overflow-y-auto space-y-2 pr-1">
               {waitingVisits.map((v, idx) => {
-                const doc = doctors.find((d) => d.id === v.doctorId);
+                const doc = doctorMap.get(v.doctorId);
 
                 return (
                   <div

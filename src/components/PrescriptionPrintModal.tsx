@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { TokenVisit, Patient, Doctor, ClinicSettings } from '../types';
 import { useClinic } from '../context/ClinicContext';
 import { Printer, X, ShieldAlert, Stethoscope } from 'lucide-react';
@@ -18,7 +18,11 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
   settings: propSettings,
   onClose,
 }) => {
-  const { patients, doctors, visits, settings: ctxSettings } = useClinic();
+  const { patients, doctors, visits, settings: ctxSettings, recordDocumentPrint } = useClinic();
+
+  // Memoized lookup maps for efficient O(1) access
+  const patientMap = useMemo(() => new Map(patients.map((p) => [p.id, p])), [patients]);
+  const doctorMap = useMemo(() => new Map(doctors.map((d) => [d.id, d])), [doctors]);
 
   // STAGE C RULE: Print prescription reads the saved prescription at the moment of print.
   // It must include every medicine saved, including newly added drugs.
@@ -30,7 +34,7 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
 
   const patient: Patient =
     propPatient ||
-    patients.find((p) => p.id === visit.patientId) || {
+    patientMap.get(visit.patientId) || {
       id: visit.patientId,
       mrn: 'PJ-UNKNOWN',
       name: 'Patient',
@@ -38,12 +42,13 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
       sex: 'Other',
       phone: '',
       allergies: [],
+      pastHistory: '',
       registeredAt: visit.timestamp,
     };
 
   const doctor: Doctor =
     propDoctor ||
-    doctors.find((d) => d.id === visit.doctorId) ||
+    doctorMap.get(visit.doctorId) ||
     doctors[0] || {
       id: 'doc-1',
       name: 'Doctor (placeholder)',
@@ -56,7 +61,8 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
 
   const settings: ClinicSettings = propSettings || ctxSettings;
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    await recordDocumentPrint('prescription', visit.id);
     window.print();
   };
 
@@ -89,7 +95,7 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
               className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-lg shadow-sm transition-colors cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              <span>Print A5 Prescription</span>
+              <span>{(visit.printCount || 0) > 0 ? 'Reprint A5 Prescription' : 'Print A5 Prescription'}</span>
             </button>
             <button
               onClick={onClose}
@@ -110,7 +116,9 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
             {/* Header: Clinic Settings */}
             <div>
               <div className="pb-3 border-b-2 border-slate-900 flex justify-between items-start">
-                <div>
+                <div className="flex items-start gap-3">
+                  <img src="/clinic-logo.jpg" alt="PJ Medical Center logo" className="w-16 h-16 object-contain" />
+                  <div>
                   <h1 className="text-base font-black uppercase tracking-wider text-slate-950">
                     {settings.clinicName}
                   </h1>
@@ -120,6 +128,7 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
                   <p className="text-[10px] text-slate-600">
                     Ph: {settings.phone} · Reg: {settings.regNumber}
                   </p>
+                  </div>
                 </div>
                 <div className="text-right">
                   <div className="text-lg font-black font-mono tracking-widest text-teal-800">

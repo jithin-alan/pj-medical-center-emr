@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Patient, TokenVisit, Doctor, Bill } from '../types';
 import { useClinic } from '../context/ClinicContext';
 import { Clock, Calendar, Stethoscope, Pill, Syringe, Receipt, X, FileText } from 'lucide-react';
@@ -24,6 +24,9 @@ export const VisitHistoryModal: React.FC<VisitHistoryModalProps> = ({
   const visits = propVisits || ctxVisits;
   const doctors = propDoctors || ctxDoctors;
   const bills = propBills || ctxBills;
+
+  // Memoized lookup map for efficient O(1) doctor access
+  const doctorMap = useMemo(() => new Map(doctors.map((d) => [d.id, d])), [doctors]);
 
   // Filter all visits for this patient and sort newest first
   const patientVisits = visits
@@ -72,7 +75,7 @@ export const VisitHistoryModal: React.FC<VisitHistoryModalProps> = ({
             </div>
           ) : (
             patientVisits.map((v) => {
-              const doc = doctors.find((d) => d.id === v.doctorId);
+              const doc = doctorMap.get(v.doctorId);
               const visitBills = bills.filter(
                 (b) => b.visitId === v.id || b.invoiceNo === v.consultationReceiptNo || b.invoiceNo === v.procedureBillId || b.invoiceNo === v.pharmacyBillId
               );
